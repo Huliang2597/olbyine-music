@@ -281,6 +281,6 @@ class NavidromeClient(context: Context) {
     companion object {
         private const val KEY_SERVER = "server"
         private const val API_VERSION = "1.16.1"
-        private const val CLIENT = "OlbyineMusic"
+        private const val CLIENT = "Olbyine-X"
     }
 }

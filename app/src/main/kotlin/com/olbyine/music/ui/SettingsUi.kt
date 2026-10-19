@@ -269,7 +269,7 @@ private fun SettingsHome(state: MainUiState, bottomContentPadding: Dp, scroll: a
                 .verticalScroll(scroll)
                 .padding(bottom = bottomContentPadding + 28.dp),
         ) {
-            ScreenHeader("设置", "Olbyine ${BuildConfig.VERSION_NAME}")
+            ScreenHeader("设置", "Olbyine-X ${BuildConfig.VERSION_NAME}")
             StyleCard(state) { onOpen(SettingsPage.APPEARANCE) }
             val compact = LocalStyleSpec.current.style == UiStyle.IOS
             SettingsSections.forEach { (title, pages) ->
@@ -1051,7 +1051,7 @@ private fun StyleCard(state: MainUiState, onClick: () -> Unit) {
         ) { StyledIcon(Icons.Rounded.MusicNote, null, Modifier.size(28.dp), tint = if (spec.style == UiStyle.IOS) Color.White else colors.onPrimary) }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text("Olbyine", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("Olbyine-X", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(
                 "${state.settings.uiStyle.label} 风格 · " + when (state.settings.themeMode) {
                     com.olbyine.music.data.ThemeMode.DARK -> "深色"
@@ -1355,7 +1355,7 @@ private fun pinCustomShortcut(context: android.content.Context, uri: android.net
         val square = android.graphics.Bitmap.createBitmap(decoded, (decoded.width - side) / 2, (decoded.height - side) / 2, side, side)
         val icon = android.graphics.Bitmap.createScaledBitmap(square, 432, 432, true)
         val info = ShortcutInfo.Builder(context, "olbyine-custom-${System.currentTimeMillis()}")
-            .setShortLabel("Olbyine")
+            .setShortLabel("Olbyine-X")
             .setIcon(PlatformIcon.createWithAdaptiveBitmap(icon))
             .setIntent(Intent(Intent.ACTION_MAIN, null, context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             .build()
@@ -1753,7 +1753,7 @@ private fun AboutRow() {
         }
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            Text("Olbyine Music", style = MaterialTheme.typography.titleLarge)
+            Text("Olbyine-X", style = MaterialTheme.typography.titleLarge)
             Text(
                 "版本 ${BuildConfig.VERSION_NAME} 正式版",
                 style = MaterialTheme.typography.bodySmall,

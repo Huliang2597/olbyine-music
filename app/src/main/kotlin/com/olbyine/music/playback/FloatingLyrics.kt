@@ -85,7 +85,7 @@ internal class FloatingLyrics(private val context: Context, private val player: 
             gravity = Gravity.TOP or Gravity.LEFT
             x = prefs.getInt(KEY_X, (16 * density).toInt())
             y = prefs.getInt(KEY_Y, (metrics.heightPixels * .62f).toInt())
-            title = "Olbyine 桌面歌词"
+            title = "Olbyine-X 桌面歌词"
         }
         val created = FloatingLyricsView(context, this)
         created.scale = prefs.getFloat(KEY_SCALE, 1f)
