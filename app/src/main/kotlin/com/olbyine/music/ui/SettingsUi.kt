@@ -250,7 +250,7 @@ internal fun SettingsScreen(
                     SettingsPage.LIBRARY -> LibrarySettingsPage(state, viewModel)
                     SettingsPage.ONLINE -> OnlineSettingsPage(state, viewModel, onExternalLyrics, onNeteaseLogin)
                     SettingsPage.HAPTICS -> HapticsPage(state, viewModel)
-                    SettingsPage.ABOUT -> AboutPage()
+                    SettingsPage.ABOUT -> AboutPage(state, viewModel)
                 }
             }
         }
@@ -909,13 +909,37 @@ private val Credits = listOf(
 )
 
 @Composable
-private fun AboutPage() {
+private fun AboutPage(state: MainUiState, viewModel: MainViewModel) {
     var licensesVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val update by viewModel.appUpdate.collectAsState()
+    val checking by viewModel.updateChecking.collectAsState()
+    val haptics = rememberHaptics()
     SettingsGroup("") {
         AboutRow()
         GroupDivider()
         LinkRow(Icons.Rounded.Gavel, "开源许可", "本应用内置 AMLL 修改版，整体以 AGPL-3.0 提供") { licensesVisible = true }
+    }
+    SettingsGroup("更新") {
+        SettingSwitch(
+            Icons.Rounded.Refresh,
+            "自动检测更新",
+            "每次启动时检查 GitHub Releases 是否有新版本",
+            state.settings.autoUpdateCheck,
+        ) { viewModel.setAutoUpdateCheck(it) }
+        GroupDivider()
+        LinkRow(
+            Icons.Rounded.CloudSync,
+            "检查更新",
+            when {
+                checking -> "正在检查…"
+                update != null -> "发现新版本 ${update?.version}"
+                else -> "当前版本 ${BuildConfig.VERSION_NAME}"
+            },
+        ) {
+            haptics.light(HapticArea.MENUS)
+            viewModel.checkForUpdates(manual = true)
+        }
     }
     SettingsGroup("开源项目与致谢") {
         Credits.forEachIndexed { index, credit ->

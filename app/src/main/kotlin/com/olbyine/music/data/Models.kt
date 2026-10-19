@@ -184,6 +184,7 @@ data class UserSettings(
     val usbVolumeMode: UsbVolumeMode = UsbVolumeMode.HARDWARE,
     val usbMaxVolume: Int = 100,
     val neteaseOnline: Boolean = true,
+    val autoUpdateCheck: Boolean = true,
     val neteaseQuality: String = "exhigh",
 )
 

@@ -133,6 +133,8 @@ class SettingsRepository(context: Context) {
     fun setUsbVolumeMode(value: UsbVolumeMode) = update { it.copy(usbVolumeMode = value) }
     fun setUsbMaxVolume(value: Int) = update { it.copy(usbMaxVolume = value.coerceIn(10, 100)) }
     fun setNeteaseOnline(value: Boolean) = update { it.copy(neteaseOnline = value) }
+
+    fun setAutoUpdateCheck(value: Boolean) = update { it.copy(autoUpdateCheck = value) }
     fun setNeteaseQuality(value: String) = update { it.copy(neteaseQuality = value) }
 
     private fun update(transform: (UserSettings) -> UserSettings) {
@@ -208,6 +210,7 @@ class SettingsRepository(context: Context) {
             .putString(KEY_USB_VOLUME_MODE, next.usbVolumeMode.name)
             .putInt(KEY_USB_MAX_VOLUME, next.usbMaxVolume)
             .putBoolean(KEY_NETEASE_ONLINE, next.neteaseOnline)
+            .putBoolean(KEY_AUTO_UPDATE, next.autoUpdateCheck)
             .putString(KEY_NETEASE_QUALITY, next.neteaseQuality)
             .apply()
         com.olbyine.music.playback.AudioEffects.update(next)
@@ -288,6 +291,7 @@ class SettingsRepository(context: Context) {
             usbVolumeMode = runCatching { UsbVolumeMode.valueOf(preferences.getString(KEY_USB_VOLUME_MODE, null) ?: "HARDWARE") }.getOrDefault(UsbVolumeMode.HARDWARE),
             usbMaxVolume = preferences.getInt(KEY_USB_MAX_VOLUME, 100),
             neteaseOnline = preferences.getBoolean(KEY_NETEASE_ONLINE, true),
+            autoUpdateCheck = preferences.getBoolean(KEY_AUTO_UPDATE, true),
             neteaseQuality = preferences.getString(KEY_NETEASE_QUALITY, null) ?: "exhigh",
         ).also { com.olbyine.music.playback.AudioEffects.update(it) }
     }
@@ -318,6 +322,7 @@ class SettingsRepository(context: Context) {
         const val KEY_USB_VOLUME_MODE = "usb_volume_mode"
         const val KEY_USB_MAX_VOLUME = "usb_max_volume"
         const val KEY_NETEASE_ONLINE = "netease_online"
+        const val KEY_AUTO_UPDATE = "auto_update_check"
         const val KEY_NETEASE_QUALITY = "netease_quality"
         const val KEY_THEME = "theme"
         const val KEY_LYRIC_SIZE = "lyric_size"

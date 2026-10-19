@@ -290,6 +290,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val trackReveal: StateFlow<LibraryReveal?> = _trackReveal
     private val _playOrigin = MutableStateFlow<PlayOrigin?>(null)
     val playOrigin: StateFlow<PlayOrigin?> = _playOrigin
+    private val _appUpdate = MutableStateFlow<com.olbyine.music.data.AppUpdate?>(null)
+    val appUpdate: StateFlow<com.olbyine.music.data.AppUpdate?> = _appUpdate
+    private val _updateChecking = MutableStateFlow(false)
+    val updateChecking: StateFlow<Boolean> = _updateChecking
     private val _onlineReveal = MutableStateFlow<OnlineReveal?>(null)
     val onlineReveal: StateFlow<OnlineReveal?> = _onlineReveal
     private val _collectionResume = MutableStateFlow<Map<String, CollectionResumePoint>>(emptyMap())
@@ -418,6 +422,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val parsedLyrics: StateFlow<LyricsDocument> = app.lyricsHub.document
 
     init {
+        if (settingsRepository.settings.value.autoUpdateCheck) checkForUpdates()
         restorePlaybackQueue()
         persistPlaybackPosition()
         processAutomaticLyricsQueue()
@@ -760,6 +765,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setUsbMaxVolume(value: Int) = settingsRepository.setUsbMaxVolume(value)
     fun setNeteaseOnline(value: Boolean) = settingsRepository.setNeteaseOnline(value)
     fun setNeteaseQuality(value: String) = settingsRepository.setNeteaseQuality(value)
+
+    fun setAutoUpdateCheck(value: Boolean) {
+        settingsRepository.setAutoUpdateCheck(value)
+        if (value) checkForUpdates()
+    }
+
+    fun dismissAppUpdate() {
+        _appUpdate.value = null
+    }
+
+    fun checkForUpdates(manual: Boolean = false) {
+        if (_updateChecking.value) return
+        viewModelScope.launch {
+            _updateChecking.value = true
+            val result = runCatching { app.updateChecker.check() }
+            _updateChecking.value = false
+            result.onSuccess { update ->
+                _appUpdate.value = update
+                if (manual) message.value = if (update == null) "已是最新版本" else "发现新版本 ${update.version}"
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                if (manual) message.value = "检查更新失败：${error.message ?: "网络不可用"}"
+            }
+        }
+    }
 
     fun switchNeteaseQuality(value: String) {
         settingsRepository.setNeteaseQuality(value)

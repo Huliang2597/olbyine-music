@@ -270,6 +270,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val albumRequest by viewModel.albumRequest.collectAsState()
     val trackReveal by viewModel.trackReveal.collectAsState()
     val onlineReveal by viewModel.onlineReveal.collectAsState()
+    val appUpdate by viewModel.appUpdate.collectAsState()
     var scRevealUser by remember { mutableStateOf<com.olbyine.music.data.ScUser?>(null) }
     var playlistPickerFor by remember { mutableStateOf<Track?>(null) }
     val trackActions = remember(viewModel) {
@@ -1358,6 +1359,33 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                         }
                     }
                 }
+            }
+        }
+    }
+    appUpdate?.let { update ->
+        OlbyineDialog(
+            onDismissRequest = viewModel::dismissAppUpdate,
+            title = "发现新版本 ${update.version}",
+            confirmButton = {
+                GlassTextButton(onClick = {
+                    val target = update.apkUrl ?: update.pageUrl
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(target))
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                    viewModel.dismissAppUpdate()
+                }) { Text("前往下载") }
+            },
+            dismissButton = { GlassTextButton(onClick = viewModel::dismissAppUpdate) { Text("稍后") } },
+        ) {
+            Column(Modifier.heightIn(max = 320.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                Text(
+                    update.notes.ifBlank { "这个版本没有附更新说明，点「前往下载」查看详情。" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
         }
     }

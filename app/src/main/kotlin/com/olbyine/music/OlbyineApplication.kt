@@ -32,6 +32,7 @@ class OlbyineApplication : Application() {
         private set
     val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
     val spotify: SpotifyRepository by lazy { SpotifyRepository(this) }
+    val updateChecker by lazy { com.olbyine.music.data.UpdateChecker() }
 
     @get:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     val motionCache: androidx.media3.datasource.cache.SimpleCache by lazy {
