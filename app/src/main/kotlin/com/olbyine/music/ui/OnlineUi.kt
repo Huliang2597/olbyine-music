@@ -391,12 +391,12 @@ private fun NeteasePlaylistPage(
     }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     var handledReveal by remember { mutableStateOf<Long?>(null) }
-    LaunchedEffect(revealSongId, songs) {
+    LaunchedEffect(revealSongId, songs, state.songsLoading) {
         val id = revealSongId ?: return@LaunchedEffect
         if (handledReveal == id) return@LaunchedEffect
         val index = songs.indexOfFirst { it.id == id }
         if (index < 0) {
-            if (songs.isNotEmpty()) onRevealed()
+            if (songs.isNotEmpty() || !state.songsLoading) onRevealed()
             return@LaunchedEffect
         }
         handledReveal = id
