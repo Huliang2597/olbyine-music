@@ -2351,39 +2351,122 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun restorePlaybackQueue() {
         viewModelScope.launch {
-            combine(library.loaded, library.tracks, playback.state) { loaded, tracks, player ->
-                Triple(loaded, tracks, player)
-            }.filter { (loaded, _, player) -> loaded && player.connected }.first().let { (_, tracks, player) ->
-                if (player.mediaItemCount != 0 || tracks.isEmpty()) return@let
-                val savedId = savedPlayback.getString(KEY_MEDIA_ID, null) ?: return@let
-                val savedIds = savedPlayback.getString(KEY_QUEUE, null)
-                    ?.split(',')
-                    ?.filter(String::isNotBlank)
-                    .orEmpty()
-                val byId = tracks.associateBy(Track::id)
-                val restoredQueue = savedIds.mapNotNull(byId::get).ifEmpty { tracks }
-                val index = restoredQueue.indexOfFirst { it.id == savedId }
-                if (index >= 0) playback.restoreQueue(
-                    restoredQueue,
-                    index,
-                    savedPlayback.getLong(KEY_POSITION, 0L),
-                )
-            }
+            playback.state.filter { it.connected }.first()
+            if (playback.state.value.mediaItemCount != 0) return@launch
+            val savedId = savedPlayback.getString(KEY_MEDIA_ID, null) ?: return@launch
+            val stored = decodeQueue(savedPlayback.getString(KEY_QUEUE_JSON, null))
+            val byId = library.tracks.value.associateBy(Track::id)
+            val restored = stored.map { byId[it.id] ?: it }
+            if (restored.isEmpty()) return@launch
+            onlineTracks.value = onlineTracks.value + restored.filter(Track::isOnline).associateBy(Track::id)
+            val index = restored.indexOfFirst { it.id == savedId }
+            if (index < 0) return@launch
+            playback.restoreQueue(restored, index, savedPlayback.getLong(KEY_POSITION, 0L))
         }
     }
 
     private fun persistPlaybackPosition() {
         viewModelScope.launch {
-            playback.positionUpdates(2_000L).collect { position ->
-                val state = playback.state.value
+            var lastQueueSignature = ""
+            playback.state.collect { state ->
                 val id = state.currentMediaId ?: return@collect
-                savedPlayback.edit()
-                    .putString(KEY_MEDIA_ID, id)
-                    .putLong(KEY_POSITION, position)
-                    .putString(KEY_QUEUE, state.queueIds.joinToString(","))
-                    .apply()
+                val editor = savedPlayback.edit().putString(KEY_MEDIA_ID, id)
+                val signature = state.queueIds.joinToString(",")
+                if (signature != lastQueueSignature) {
+                    val known = onlineTracks.value + library.tracks.value.associateBy(Track::id)
+                    val queue = state.queueIds.mapNotNull(known::get)
+                    if (queue.isNotEmpty()) {
+                        editor.putString(KEY_QUEUE_JSON, encodeQueue(queue))
+                        lastQueueSignature = signature
+                    }
+                }
+                if (state.positionMs > 0L) editor.putLong(KEY_POSITION, state.positionMs)
+                editor.apply()
             }
         }
+        viewModelScope.launch {
+            playback.positionUpdates(2_000L).collect { position ->
+                savedPlayback.edit().putLong(KEY_POSITION, position).apply()
+            }
+        }
+    }
+
+    private fun encodeQueue(tracks: List<Track>): String {
+        val rows = org.json.JSONArray()
+        tracks.forEach { track ->
+            rows.put(
+                org.json.JSONObject()
+                    .put("id", track.id)
+                    .put("uri", track.uri)
+                    .put("title", track.title)
+                    .put("artist", track.artist)
+                    .put("album", track.album)
+                    .put("durationMs", track.durationMs)
+                    .put("displayName", track.displayName)
+                    .put("mimeType", track.mimeType)
+                    .put("sizeBytes", track.sizeBytes)
+                    .put("coverPath", track.coverPath)
+                    .put("favorite", track.favorite)
+                    .put("addedAt", track.addedAt)
+                    .put("folderId", track.folderId)
+                    .put("folderPath", track.folderPath)
+                    .put("trackNumber", track.trackNumber)
+                    .put("discNumber", track.discNumber)
+                    .put("year", track.year)
+                    .put("albumArtist", track.albumArtist)
+                    .put("sampleRate", track.sampleRate)
+                    .put("bitsPerSample", track.bitsPerSample)
+                    .put("bitrate", track.bitrate)
+                    .put("artworkUrl", track.artworkUrl),
+            )
+        }
+        return rows.toString()
+    }
+
+    private fun decodeQueue(raw: String?): List<Track> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val rows = org.json.JSONArray(raw)
+            (0 until rows.length()).mapNotNull { index ->
+                val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                val id = row.optString("id").takeIf(String::isNotBlank) ?: return@mapNotNull null
+                val uri = row.optString("uri").takeIf(String::isNotBlank) ?: return@mapNotNull null
+                Track(
+                    id = id,
+                    uri = uri,
+                    title = row.optString("title"),
+                    artist = row.optString("artist"),
+                    album = row.optString("album"),
+                    durationMs = row.optLong("durationMs"),
+                    displayName = row.optString("displayName"),
+                    mimeType = row.optString("mimeType").takeIf(String::isNotBlank),
+                    sizeBytes = row.optLong("sizeBytes"),
+                    coverPath = row.optString("coverPath").takeIf(String::isNotBlank),
+                    lyrics = null,
+                    wordLyrics = null,
+                    translationLyrics = null,
+                    romanLyrics = null,
+                    lyricsSource = null,
+                    lyricsFormat = null,
+                    lyricsConfidence = null,
+                    lyricsInstrumental = false,
+                    lyricsLookupAt = 0L,
+                    lyricsLookupStatus = null,
+                    favorite = row.optBoolean("favorite"),
+                    addedAt = row.optLong("addedAt"),
+                    folderId = row.optString("folderId").takeIf(String::isNotBlank),
+                    folderPath = row.optString("folderPath").takeIf(String::isNotBlank),
+                    trackNumber = row.optInt("trackNumber"),
+                    discNumber = row.optInt("discNumber"),
+                    year = row.optInt("year"),
+                    albumArtist = row.optString("albumArtist").takeIf(String::isNotBlank),
+                    sampleRate = row.optInt("sampleRate"),
+                    bitsPerSample = row.optInt("bitsPerSample"),
+                    bitrate = row.optInt("bitrate"),
+                    artworkUrl = row.optString("artworkUrl").takeIf(String::isNotBlank),
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun enqueueAutomaticLyrics(existingTrackIds: Set<String>) {
@@ -2570,6 +2653,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val KEY_MEDIA_ID = "media_id"
         const val KEY_POSITION = "position"
         const val KEY_QUEUE = "queue"
+    const val KEY_QUEUE_JSON = "queue_json"
         const val KEY_VIEW_MODE = "view_mode"
         const val KEY_SORT_MODE = "sort_mode"
         const val NOT_FOUND_RETRY_MS = 6 * 60 * 60_000L
