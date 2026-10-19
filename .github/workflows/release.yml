@@ -1,0 +1,26 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect apk
+        run: |
+          mkdir -p out
+          cp OlbyineMusic-1.1.apk out/OlbyineMusic-1.1.apk
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Olbyine Music 1.1
+          tag_name: ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: out/OlbyineMusic-1.1.apk
