@@ -37,7 +37,18 @@ pnpm run build
 
 USB 音频引擎的原生库源码位于 `app/src/main/cpp/`，预编译产物在 `app/src/main/jniLibs/`。
 
-源码不包含签名密钥。
+### 签名
+
+源码不包含签名密钥。要构建签名后的 release 包，在仓库根目录放一个 `keystore.properties`（已被 `.gitignore` 忽略）：
+
+```properties
+storeFile=keystore/olbyine-x-release.jks
+storePassword=你的密码
+keyAlias=olbyine-x
+keyPassword=你的密码
+```
+
+没有该文件时 `assembleRelease` 会回退到 debug 签名。
 
 ## 许可
 

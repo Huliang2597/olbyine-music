@@ -12,3 +12,5 @@ local.properties
 lyrics-engine/node_modules/
 captures/
 .cxx/
+keystore.properties
+keystore/
