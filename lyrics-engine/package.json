@@ -1,0 +1,16 @@
+{
+  "name": "olbyine-lyrics-engine",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@applemusic-like-lyrics/core": "0.6.0",
+    "@applemusic-like-lyrics/lyric": "1.1.0"
+  },
+  "devDependencies": {
+    "vite": "8.3.0"
+  }
+}

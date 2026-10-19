@@ -1,0 +1,14 @@
+﻿.gradle/
+.kotlin/
+build/
+local.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+.idea/
+*.iml
+.DS_Store
+lyrics-engine/node_modules/
+captures/
+.cxx/

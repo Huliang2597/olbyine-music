@@ -1,0 +1,97 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+android {
+    namespace 'com.olbyine.music'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.olbyine.music'
+        minSdk 29
+        targetSdk 36
+        versionCode 100
+        versionName '1.0'
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+    }
+
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    sourceSets {
+        main {
+            java.setSrcDirs([])
+            kotlin.setSrcDirs(['src/main/kotlin'])
+            res.setSrcDirs(['src/native/res'])
+            assets.setSrcDirs(['src/native/assets'])
+        }
+    }
+
+    packaging {
+        resources {
+            excludes += ['/META-INF/{AL2.0,LGPL2.1}', '/META-INF/NOTICE.md', '/META-INF/LICENSE.md',
+                         'DebugProbesKt.bin', '/META-INF/*.version', '/kotlin/**', '/META-INF/com.android.tools/**']
+        }
+    }
+}
+
+dependencies {
+    implementation project(':alac-decoder')
+    implementation platform('androidx.compose:compose-bom:2024.10.01')
+    implementation 'androidx.activity:activity-compose:1.10.1'
+    implementation 'androidx.compose.animation:animation'
+    implementation 'androidx.compose.foundation:foundation'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.core:core-ktx:1.16.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation 'androidx.documentfile:documentfile:1.0.1'
+
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    implementation 'androidx.media3:media3-common:1.10.1'
+    implementation 'androidx.media3:media3-datasource:1.10.1'
+    implementation 'androidx.media3:media3-exoplayer:1.10.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.10.1'
+    implementation 'androidx.media3:media3-extractor:1.10.1'
+    implementation 'androidx.media3:media3-session:1.10.1'
+
+    implementation 'com.google.guava:guava:33.3.1-android'
+    implementation 'com.google.zxing:core:3.5.3'
+
+    testImplementation 'junit:junit:4.13.2'
+}

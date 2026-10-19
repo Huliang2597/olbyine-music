@@ -1,0 +1,169 @@
+import type { LyricWord } from "../interfaces.ts";
+import { isCJK } from "./is-cjk.ts";
+
+const SPLIT_WHITESPACE_RE = /(\s+)/;
+const WHITESPACE_RE = /\s/g;
+
+/**
+ * 将输入的单词重新分组，之间没有空格的单词将会组合成一个单词数组
+ *
+ * 例如输入：`["Life", " ", "is", " a", " su", "gar so", "sweet"]`
+ *
+ * 应该返回：`["Life", " ", "is", " a", [" su", "gar"], "so", "sweet"]`
+ * @param words 输入的单词数组
+ * @returns 重新分组后的单词数组
+ */
+export function chunkAndSplitLyricWords(
+	words: LyricWord[],
+): (LyricWord | LyricWord[])[] {
+	const result: (LyricWord | LyricWord[])[] = [];
+	let currentGroup: LyricWord[] = [];
+
+	const flushGroup = () => {
+		if (currentGroup.length > 0) {
+			result.push(
+				currentGroup.length === 1 ? currentGroup[0] : [...currentGroup],
+			);
+			currentGroup = [];
+		}
+	};
+
+	const processAtom = (atom: LyricWord) => {
+		const isSpace = atom.word.trim().length === 0;
+		const hasRuby = (atom.ruby?.length ?? 0) > 0;
+		const isCJKChar = isCJK(atom.word);
+
+		const isMergeable = !isSpace && !hasRuby && !isCJKChar;
+
+		if (isMergeable) {
+			currentGroup.push(atom);
+		} else {
+			flushGroup();
+			result.push(atom);
+		}
+	};
+
+	for (const w of words) {
+		const content = w.word.trim();
+		const isSpace = content.length === 0;
+		const romanWord = w.romanWord ?? "";
+		const obscene = w.obscene ?? false;
+		const hasRuby = (w.ruby?.length ?? 0) > 0;
+
+		if (isSpace) {
+			processAtom({ ...w, obscene });
+			continue;
+		}
+
+		if (hasRuby) {
+			const leadingSpaceMatch = w.word.match(/^\s+/);
+			const trailingSpaceMatch = w.word.match(/\s+$/);
+			const leadingSpace = leadingSpaceMatch ? leadingSpaceMatch[0] : "";
+			const trailingSpace = trailingSpaceMatch ? trailingSpaceMatch[0] : "";
+
+			if (leadingSpace) {
+				processAtom({
+					word: leadingSpace,
+					romanWord: "",
+					startTime: w.startTime,
+					endTime: w.startTime,
+					obscene: obscene,
+				});
+			}
+
+			processAtom({
+				...w,
+				word: content,
+				obscene: obscene,
+			});
+
+			if (trailingSpace) {
+				processAtom({
+					word: trailingSpace,
+					romanWord: "",
+					startTime: w.endTime,
+					endTime: w.endTime,
+					obscene: obscene,
+				});
+			}
+			continue;
+		}
+
+		const parts = w.word.split(SPLIT_WHITESPACE_RE).filter((p) => p.length > 0);
+
+		const totalLength = w.word.replace(WHITESPACE_RE, "").length || 1;
+		const timeSpan = w.endTime - w.startTime;
+		const timePerUnit = timeSpan / totalLength;
+
+		const wordParts = w.word
+			.trim()
+			.split(/\s+/)
+			.filter((p) => p.length > 0);
+		const romanTrimmed = romanWord.trim();
+		const romanParts =
+			romanTrimmed.length > 0
+				? romanTrimmed.split(/\s+/).filter((p) => p.length > 0)
+				: [];
+		const isMatched =
+			wordParts.length > 0 && wordParts.length === romanParts.length;
+
+		let currentOffset = 0;
+		let nonSpaceIndex = 0;
+
+		for (const part of parts) {
+			if (!part.trim()) {
+				const startTime = w.startTime + currentOffset * timePerUnit;
+				processAtom({
+					word: part,
+					romanWord: "",
+					startTime: startTime,
+					endTime: startTime,
+					obscene: obscene,
+				});
+				continue;
+			}
+
+			let partRomanWord = "";
+			if (romanParts.length > 0) {
+				if (isMatched) {
+					partRomanWord = romanParts[nonSpaceIndex] ?? "";
+				} else if (nonSpaceIndex === 0) {
+					partRomanWord = romanWord;
+				}
+			}
+			nonSpaceIndex++;
+
+			if (isCJK(part) && part.length > 1 && romanTrimmed.length === 0) {
+				const chars = part.split("");
+				for (const char of chars) {
+					const startTime = w.startTime + currentOffset * timePerUnit;
+					processAtom({
+						word: char,
+						romanWord: "",
+						startTime: startTime,
+						endTime: startTime + timePerUnit,
+						obscene: obscene,
+					});
+					currentOffset += 1;
+				}
+			} else {
+				const partRealLen = part.length;
+				const startTime = w.startTime + currentOffset * timePerUnit;
+				const duration = partRealLen * timePerUnit;
+
+				processAtom({
+					word: part,
+					romanWord: partRomanWord,
+					startTime: startTime,
+					endTime: startTime + duration,
+					obscene: obscene,
+				});
+				currentOffset += partRealLen;
+			}
+		}
+	}
+
+	flushGroup();
+
+	return result;
+}

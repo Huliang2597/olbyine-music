@@ -1,0 +1,330 @@
+@property --bright-mask-alpha {
+	syntax: "<number>";
+	inherits: true;
+	initial-value: 1;
+}
+
+@property --dark-mask-alpha {
+	syntax: "<number>";
+	inherits: true;
+	initial-value: 0.2;
+}
+
+.lyricLineWrapper {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	width: 100%;
+	box-sizing: border-box;
+	padding: 0.4em var(--lyric-line-padding-x);
+	border-radius: 0.25em;
+
+	gap: 0.3em;
+
+	will-change: transform;
+	transition:
+		opacity 0.4s ease,
+		filter 0.4s ease,
+		background-color 0.25s ease;
+
+	&:not(.bottomLineWrapper):hover {
+		background-color: var(--amll-lp-hover-bg-color, #fff1);
+	}
+
+	&:not(.bottomLineWrapper):active {
+		background-color: var(--amll-lp-hover-bg-color, #ffffff05);
+	}
+}
+
+.lyricLine {
+	position: relative;
+	box-sizing: border-box;
+	width: var(--amll-lp-width, 100%);
+	min-width: var(--amll-lp-width, 100%);
+	max-width: var(--amll-lp-width, 100%);
+	height: fit-content;
+
+	padding: 0.2em;
+	margin: -0.2em;
+
+	contain: layout style paint;
+	content-visibility: auto;
+	contain-intrinsic-size: auto 40px;
+	backface-visibility: hidden;
+	transform-origin: left;
+
+	--mask-alpha-duration: 0.45s;
+	--bright-mask-alpha: 0.2;
+	--dark-mask-alpha: 0.2;
+
+	transition:
+		box-shadow 0.25s,
+		--bright-mask-alpha var(--mask-alpha-duration) ease-out,
+		--dark-mask-alpha var(--mask-alpha-duration) ease-out;
+
+	&.gradientMask {
+		--mask-alpha-duration: 0.3s;
+		--bright-mask-alpha: 1;
+		--dark-mask-alpha: 0.4;
+	}
+}
+
+.lyricDuetLine {
+	text-align: right;
+	transform-origin: right;
+}
+
+.lyricMainLine {
+	margin: -1em;
+	padding: 1em;
+	transition: opacity 0.3s 0.1s;
+	contain: layout style;
+
+	& span {
+		display: inline-block;
+		text-align: start;
+		vertical-align: bottom;
+	}
+
+	.romanWord {
+		display: flex;
+		padding-inline-end: 0.3em;
+		font-size: 0.5em;
+		line-height: 1em;
+	}
+
+	.rubyWord {
+		display: flex;
+		justify-content: center;
+		min-height: 1em;
+		font-size: 0.5em;
+		line-height: 1em;
+	}
+
+	.wordWithRuby {
+		display: inline-flex;
+		flex-direction: column;
+		align-items: center;
+		vertical-align: bottom;
+	}
+
+	.wordBody {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.rubyBaseWord {
+		display: inline-flex;
+		flex-wrap: nowrap;
+		white-space: nowrap;
+		justify-content: center;
+	}
+
+	& > span,
+	span.emphasizeWrapper {
+		display: inline-block;
+		margin: -1em;
+		padding: 1em;
+		white-space: pre-wrap;
+		vertical-align: bottom;
+		contain: layout style;
+
+		& > span {
+			margin: -1em;
+			padding: 1em;
+		}
+
+		&.emphasize,
+		span.emphasize {
+			backface-visibility: hidden;
+
+			& > span {
+				margin: -1em;
+				padding: 1em;
+				backface-visibility: hidden;
+			}
+		}
+	}
+}
+
+.lyricBgLine {
+	opacity: 0.4;
+	font-size: max(calc(1em * var(--amll-lp-bg-line-scale, 0.7)), 10px);
+	transition:
+		background-color 0.25s,
+		box-shadow 0.25s,
+		--bright-mask-alpha var(--mask-alpha-duration) ease-out,
+		--dark-mask-alpha var(--mask-alpha-duration) ease-out;
+
+	.lyricMainLine {
+		padding: 1.2em 1em;
+	}
+
+	&.active {
+		opacity: 0.4;
+		transition:
+			background-color 0.25s,
+			box-shadow 0.25s,
+			--bright-mask-alpha var(--mask-alpha-duration) ease-out,
+			--dark-mask-alpha var(--mask-alpha-duration) ease-out;
+	}
+}
+
+.lyricSubLine {
+	opacity: 0.3;
+	font-size: max(0.5em, 10px);
+	line-height: 1.5em;
+	transition: opacity 0.2s 0.25s;
+
+	@supports (mix-blend-mode: plus-lighter) {
+		opacity: 0.3;
+	}
+}
+
+.bottomLine {
+	padding-top: 0;
+	padding-bottom: 0;
+	font-size: var(--amll-lp-bottom-line-font-size, max(0.7em, 10px));
+	line-height: 1.8em;
+	cursor: default;
+	opacity: 0.2;
+	transition: opacity 0.4s ease;
+
+	&.gradientMask {
+		opacity: 0.85;
+	}
+
+	&:empty {
+		display: none;
+		height: 0;
+		margin: 0;
+		padding: 0;
+	}
+}
+
+.bgWrapper {
+	position: absolute;
+	top: 100%;
+	left: var(--lyric-line-padding-x);
+	z-index: -1;
+	display: flex;
+	flex-direction: column;
+	align-items: inherit;
+	width: calc(100% - var(--lyric-line-padding-x) * 2);
+
+	visibility: visible;
+	pointer-events: auto;
+	opacity: 0;
+	transform-origin: left top;
+	transition: opacity 0.3s ease;
+}
+
+.bgWrapperTop {
+	position: relative;
+	left: 0;
+	width: 100%;
+	top: auto;
+	bottom: auto;
+	transform-origin: left bottom;
+}
+
+.bgWrapperActive {
+	position: relative;
+	left: 0;
+	width: 100%;
+	top: auto;
+	bottom: auto;
+	opacity: 1;
+}
+
+.bgWrapperHidden {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.interludeDots {
+	position: absolute;
+	left: 0;
+	display: flex;
+	align-items: center;
+	/* gap 应和圆点直径保持 0.6:1 的比例 */
+	gap: 0.18em;
+	width: fit-content;
+	height: clamp(0.5em, 1vh, 3em);
+	padding: 0.4em var(--lyric-line-padding-x);
+
+	transform-origin: center;
+
+	& > * {
+		display: inline-block;
+		width: 0.3em;
+		height: 0.3em;
+		border-radius: 50%;
+		background-color: var(--amll-lp-color, white);
+		aspect-ratio: 1 / 1;
+	}
+}
+
+.disableSpring > *,
+.disableSpring .lyricLine {
+	transition:
+		filter 0.25s,
+		transform 0.5s,
+		background-color 0.25s,
+		box-shadow 0.25s;
+}
+
+.tmpDisableTransition {
+	/* biome-ignore lint/complexity/noImportantStyles: 覆盖内联样式 */
+	transition: none !important;
+}
+
+:global(.amll-lyric-player) {
+	--lyric-line-padding-x: 1em;
+
+	touch-action: pan-x;
+
+	@media screen and (max-width: 500px) {
+		--lyric-line-padding-x: 20px;
+	}
+
+	&:hover .lyricLine,
+	&:hover .lyricLineWrapper {
+		/* biome-ignore lint/complexity/noImportantStyles: 覆盖内联样式 */
+		filter: unset !important;
+	}
+
+	&:not(.playing) .bgWrapper {
+		position: relative;
+		top: auto;
+		bottom: auto;
+		opacity: 1;
+		left: 0;
+		width: 100%;
+	}
+
+	&.hasDuetLine {
+		.lyricLine:not(.lyricDuetLine) {
+			padding-right: 15%;
+		}
+
+		.lyricDuetLine {
+			padding-left: 15%;
+		}
+
+		.isDuetWrapper {
+			align-items: flex-end;
+
+			.bgWrapper {
+				transform-origin: right top;
+			}
+
+			.bgWrapperTop {
+				transform-origin: right bottom;
+			}
+		}
+	}
+}
