@@ -188,6 +188,21 @@ data class MainUiState(
     val libraryLoaded: Boolean = false,
 )
 
+data class PlayOrigin(
+    val kind: String,
+    val id: String,
+    val title: String = "",
+    val scPlaylist: com.olbyine.music.data.ScPlaylist? = null,
+    val ndAlbum: com.olbyine.music.data.NdAlbum? = null,
+    val ndPlaylist: com.olbyine.music.data.NdPlaylist? = null,
+)
+
+data class LibraryReveal(
+    val trackId: String,
+    val kind: String,
+    val id: String,
+)
+
 data class OnlineReveal(
     val provider: String,
     val trackId: String,
@@ -195,6 +210,9 @@ data class OnlineReveal(
     val artist: String = "",
     val songId: Long = 0,
     val scTrackId: Long = 0,
+    val scPlaylist: com.olbyine.music.data.ScPlaylist? = null,
+    val ndAlbum: com.olbyine.music.data.NdAlbum? = null,
+    val ndPlaylist: com.olbyine.music.data.NdPlaylist? = null,
 )
 
 data class CollectionResumePoint(
@@ -235,8 +253,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val savedPlayback = application.getSharedPreferences("native_playback", Application.MODE_PRIVATE)
     private val libraryPreferences = application.getSharedPreferences("native_library_view", Application.MODE_PRIVATE)
 
-    private val _trackReveal = MutableStateFlow<String?>(null)
-    val trackReveal: StateFlow<String?> = _trackReveal
+    private val _trackReveal = MutableStateFlow<LibraryReveal?>(null)
+    val trackReveal: StateFlow<LibraryReveal?> = _trackReveal
+    private val _playOrigin = MutableStateFlow<PlayOrigin?>(null)
+    val playOrigin: StateFlow<PlayOrigin?> = _playOrigin
     private val _onlineReveal = MutableStateFlow<OnlineReveal?>(null)
     val onlineReveal: StateFlow<OnlineReveal?> = _onlineReveal
     private val _collectionResume = MutableStateFlow<Map<String, CollectionResumePoint>>(emptyMap())
@@ -433,9 +453,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         libraryPreferences.edit().putString(KEY_SORT_MODE, value.name).apply()
     }
 
+    fun setPlayOrigin(origin: PlayOrigin?) {
+        _playOrigin.value = origin
+    }
+
     fun revealInLibrary(track: Track) {
+        val origin = _playOrigin.value
         if (!track.isOnline) {
-            _trackReveal.value = track.id
+            val kind = origin?.kind?.takeIf { it == "folder" || it == "playlist" || it == "album" }
+            val id = origin?.id.orEmpty()
+            _trackReveal.value = LibraryReveal(track.id, kind ?: "folder", if (kind == null) "" else id)
             navigateTo(AppDestination.LIBRARY)
             return
         }
@@ -443,6 +470,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             track.id.startsWith("ncm:") -> {
                 val songId = track.id.removePrefix("ncm:").toLongOrNull() ?: return
                 _onlineReveal.value = OnlineReveal(provider = "netease", trackId = track.id, songId = songId, title = track.title)
+                val originKind = origin?.kind
+                val originId = origin?.id?.toLongOrNull()
+                if ((originKind == "ncm:PLAYLIST" || originKind == "ncm:ALBUM" || originKind == "ncm:CHART") && originId != null) {
+                    openNeteasePlaylist(
+                        com.olbyine.music.data.NeteasePlaylistSummary(
+                            originId,
+                            origin?.title.orEmpty(),
+                            null,
+                            0,
+                            "",
+                            liked = false,
+                            own = false,
+                            kind = runCatching { com.olbyine.music.data.NeteaseCollectionKind.valueOf(originKind.removePrefix("ncm:")) }
+                                .getOrDefault(com.olbyine.music.data.NeteaseCollectionKind.PLAYLIST),
+                        ),
+                    )
+                    return
+                }
                 viewModelScope.launch {
                     val albumId = runCatching { netease.song(songId)?.albumId?.takeIf { it > 0 } }.getOrNull()
                     if (albumId == null) {
@@ -467,9 +512,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             track.id.startsWith("sc:") -> {
                 val scId = track.id.removePrefix("sc:").toLongOrNull() ?: return
-                _onlineReveal.value = OnlineReveal(provider = "soundcloud", trackId = track.id, scTrackId = scId, title = track.title)
+                _onlineReveal.value = OnlineReveal(
+                    provider = "soundcloud",
+                    trackId = track.id,
+                    scTrackId = scId,
+                    title = track.title,
+                    scPlaylist = origin?.scPlaylist,
+                )
             }
-            else -> _onlineReveal.value = OnlineReveal(provider = "navidrome", trackId = track.id, title = track.title, artist = track.artist)
+            else -> _onlineReveal.value = OnlineReveal(
+                provider = "navidrome",
+                trackId = track.id,
+                title = track.title,
+                artist = track.artist,
+                ndAlbum = origin?.ndAlbum,
+                ndPlaylist = origin?.ndPlaylist,
+            )
         }
     }
 
@@ -1230,8 +1288,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         navigateTo(AppDestination.NOW_PLAYING)
     }
 
-    fun playTracks(tracks: List<Track>, index: Int) {
+    fun playTracks(tracks: List<Track>, index: Int, origin: PlayOrigin? = null) {
         if (tracks.isEmpty() || index !in tracks.indices) return
+        val currentKind = _playOrigin.value?.kind
+        if (origin != null || currentKind == "folder" || currentKind == "playlist" || currentKind == "album") {
+            _playOrigin.value = origin
+        }
         playback.playQueue(tracks, index)
         navigateTo(AppDestination.NOW_PLAYING)
     }
@@ -1735,8 +1797,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val navidrome: com.olbyine.music.data.NavidromeClient get() = app.navidrome
 
-    fun playNavidrome(songs: List<com.olbyine.music.data.NdSong>, index: Int, shuffle: Boolean) {
+    fun playNavidrome(
+        songs: List<com.olbyine.music.data.NdSong>,
+        index: Int,
+        shuffle: Boolean,
+        origin: PlayOrigin? = null,
+    ) {
         if (songs.isEmpty()) return
+        _playOrigin.value = origin
         val tracks = runCatching { songs.map(app.navidrome::toTrack) }.getOrElse {
             showMessage(it.message ?: "无法播放")
             return
@@ -1799,7 +1867,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val soundCloud: com.olbyine.music.data.SoundCloudClient get() = app.soundCloud
 
-    fun playSoundCloud(tracks: List<com.olbyine.music.data.ScTrack>, index: Int, shuffle: Boolean = false) {
+    fun playSoundCloud(
+        tracks: List<com.olbyine.music.data.ScTrack>,
+        index: Int,
+        shuffle: Boolean = false,
+        origin: PlayOrigin? = null,
+    ) {
+        _playOrigin.value = origin
         val chosen = tracks.getOrNull(index)
         val playable = tracks.filter { it.streamable }
         if (playable.isEmpty()) {
@@ -1927,6 +2001,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }?.takeIf { it >= 0 } ?: 0
         if (shuffle && !uiState.value.playback.shuffleEnabled) playback.toggleShuffle()
         _activeCollection.value = source
+        _playOrigin.value = source?.let { key ->
+            val parts = key.split(":")
+            if (parts.size >= 3) PlayOrigin(kind = parts[0] + ":" + parts[1], id = parts[2]) else null
+        }
         activeQueueIds = if (source == null) emptySet() else queue.map(Track::id).toSet()
         activeSongByTrack = if (source == null) emptyMap() else songs.mapNotNull { song ->
             (state.localMatches[song.id] ?: com.olbyine.music.data.NeteaseSong.trackId(song.id)).let { it to song.id }

@@ -714,8 +714,9 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                     bottomPadding = scaffoldPadding.calculateBottomPadding(),
                                     currentTrackId = state.currentTrack?.id,
                                     isPlaying = state.playback.isPlaying,
-                                    onPlay = { songs, index, shuffle -> runPlaybackAction { viewModel.playNavidrome(songs, index, shuffle) } },
+                                    onPlay = { songs, index, shuffle, origin -> runPlaybackAction { viewModel.playNavidrome(songs, index, shuffle, origin) } },
                                     revealTitle = onlineReveal?.takeIf { it.provider == "navidrome" }?.title,
+                                    revealAlbum = onlineReveal?.takeIf { it.provider == "navidrome" }?.ndAlbum,
                                     onRevealHandled = viewModel::clearOnlineReveal,
                                 )
                             } else if (provider == "soundcloud") {
@@ -729,12 +730,13 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                     openUser = scOpenRequest as? com.olbyine.music.data.ScUser,
                                     onOpenUserHandled = { scOpenRequest = null },
                                     revealUser = scRevealUser,
+                                    revealPlaylist = onlineReveal?.takeIf { it.provider == "soundcloud" }?.scPlaylist,
                                     revealTrackId = onlineReveal?.takeIf { it.provider == "soundcloud" }?.scTrackId,
                                     onRevealHandled = {
                                         scRevealUser = null
                                         viewModel.clearOnlineReveal()
                                     },
-                                    onPlay = { tracks, index, shuffle -> runPlaybackAction { viewModel.playSoundCloud(tracks, index, shuffle) } },
+                                    onPlay = { tracks, index, shuffle, origin -> runPlaybackAction { viewModel.playSoundCloud(tracks, index, shuffle, origin) } },
                                 )
                             } else {
                                 NeteaseScreen(
@@ -768,7 +770,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onAddTracksToPlaylist = viewModel::addTracksToPlaylist,
                             onSearch = viewModel::setSearch,
                             onFilter = viewModel::setLibraryFilter,
-                            onPlayTracks = { tracks, index -> runPlaybackAction { viewModel.playTracks(tracks, index) } },
+                            onPlayTracks = { tracks, index, origin -> runPlaybackAction { viewModel.playTracks(tracks, index, origin) } },
                             onPlayInOrder = playInOrder,
                             onShufflePlay = shufflePlay,
                             onFavorite = viewModel::toggleFavorite,
@@ -795,6 +797,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             albumRequest = albumRequest,
                             revealTrackId = trackReveal,
                             onRevealHandled = viewModel::clearTrackReveal,
+                            onPlayOrigin = viewModel::setPlayOrigin,
                             onAlbumRequestHandled = viewModel::consumeAlbumRequest,
                             nav = libraryNav,
                             onAlbumStyle = viewModel::setAlbumStyle,

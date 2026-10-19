@@ -82,6 +82,7 @@ private class NdContext(
     val isPlaying: Boolean,
     val onPlay: (List<NdSong>, Int, Boolean) -> Unit,
     val open: (NdRoute) -> Unit,
+    val setOrigin: (com.olbyine.music.PlayOrigin?) -> Unit = {},
 )
 
 private val LocalNd = staticCompositionLocalOf<NdContext?> { null }
@@ -92,14 +93,24 @@ internal fun NavidromeScreen(
     bottomPadding: Dp,
     currentTrackId: String?,
     isPlaying: Boolean,
-    onPlay: (List<NdSong>, Int, Boolean) -> Unit,
+    onPlay: (List<NdSong>, Int, Boolean, com.olbyine.music.PlayOrigin?) -> Unit,
     revealTitle: String? = null,
+    revealAlbum: com.olbyine.music.data.NdAlbum? = null,
     onRevealHandled: () -> Unit = {},
 ) {
     val server by client.server.collectAsState()
     var pendingSong by remember { mutableStateOf<String?>(null) }
+    var pendingRevealTitle by remember { mutableStateOf<String?>(null) }
     val routes = rememberPageStack<NdRoute>()
-    LaunchedEffect(revealTitle) {
+    LaunchedEffect(revealTitle, revealAlbum) {
+        val direct = revealAlbum
+        if (direct != null) {
+            pendingSong = null
+            pendingRevealTitle = revealTitle
+            routes.clear()
+            routes.pushFromTouch(NdRoute.AlbumPage(direct))
+            return@LaunchedEffect
+        }
         val title = revealTitle ?: return@LaunchedEffect
         val found = runCatching { client.search(title) }.getOrNull()
         val song = found?.songs?.firstOrNull { it.title.equals(title, ignoreCase = true) } ?: found?.songs?.firstOrNull()
@@ -115,7 +126,13 @@ internal fun NavidromeScreen(
         }
         onRevealHandled()
     }
-    val context = NdContext(client, currentTrackId, isPlaying, onPlay) { routes.pushFromTouch(it) }
+    var playOrigin by remember { mutableStateOf<com.olbyine.music.PlayOrigin?>(null) }
+    val context = NdContext(
+        client, currentTrackId, isPlaying,
+        { songs, index, shuffle -> onPlay(songs, index, shuffle, playOrigin) },
+        { routes.pushFromTouch(it) },
+        setOrigin = { playOrigin = it },
+    )
     CompositionLocalProvider(LocalNd provides context) {
         if (server == null) {
             Column(Modifier.fillMaxSize()) {
@@ -130,7 +147,11 @@ internal fun NavidromeScreen(
                         .clickable(remember { MutableInteractionSource() }, indication = null) {},
                 ) {
                     when (route) {
-                        is NdRoute.AlbumPage -> NdAlbumPage(route.album, bottomPadding, back, pendingSong) { pendingSong = null }
+                        is NdRoute.AlbumPage -> NdAlbumPage(route.album, bottomPadding, back, pendingSong, pendingRevealTitle) {
+                            pendingSong = null
+                            pendingRevealTitle = null
+                            onRevealHandled()
+                        }
                         is NdRoute.ArtistPage -> NdArtistPage(route.artist, bottomPadding, back)
                         is NdRoute.PlaylistPage -> NdPlaylistPage(route.playlist, bottomPadding, back)
                     }
@@ -483,17 +504,24 @@ private fun NdAlbumPage(
     bottomPadding: Dp,
     onBack: () -> Unit,
     revealSongId: String? = null,
+    revealTitle: String? = null,
     onRevealed: () -> Unit = {},
 ) {
     val nd = LocalNd.current ?: return
     val (state, retry) = rememberLoad(album.id) { nd.client.album(album.id) }
     val songs = state.value?.second
+    LaunchedEffect(album.id) {
+        nd.setOrigin(com.olbyine.music.PlayOrigin("nd:album", album.id, album.name, ndAlbum = album))
+    }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     var handledReveal by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(revealSongId, songs) {
-        val id = revealSongId ?: return@LaunchedEffect
+    LaunchedEffect(revealSongId, revealTitle, songs) {
+        val id = revealSongId ?: revealTitle ?: return@LaunchedEffect
         if (handledReveal == id) return@LaunchedEffect
-        val index = songs?.indexOfFirst { it.id == id } ?: -1
+        val index = when {
+            revealSongId != null -> songs?.indexOfFirst { it.id == revealSongId } ?: -1
+            else -> songs?.indexOfFirst { it.title.equals(revealTitle, ignoreCase = true) } ?: -1
+        }
         if (index < 0) return@LaunchedEffect
         handledReveal = id
         listState.scrollToItem(index + 1)

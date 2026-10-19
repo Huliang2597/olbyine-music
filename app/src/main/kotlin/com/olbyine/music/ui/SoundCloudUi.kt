@@ -139,6 +139,7 @@ private class ScContext(
     val onRepost: ((ScTrack) -> Unit)? = null,
     val following: Set<Long> = emptySet(),
     val onFollow: ((ScUser) -> Unit)? = null,
+    val setOrigin: (com.olbyine.music.PlayOrigin?) -> Unit = {},
 )
 
 private val LocalSc = staticCompositionLocalOf<ScContext?> { null }
@@ -151,10 +152,11 @@ internal fun SoundCloudScreen(
     isPlaying: Boolean,
     searchRequest: String?,
     onSearchHandled: () -> Unit,
-    onPlay: (List<ScTrack>, Int, Boolean) -> Unit,
+    onPlay: (List<ScTrack>, Int, Boolean, com.olbyine.music.PlayOrigin?) -> Unit,
     openUser: ScUser? = null,
     onOpenUserHandled: () -> Unit = {},
     revealUser: ScUser? = null,
+    revealPlaylist: com.olbyine.music.data.ScPlaylist? = null,
     revealTrackId: Long? = null,
     onRevealHandled: () -> Unit = {},
 ) {
@@ -175,9 +177,17 @@ internal fun SoundCloudScreen(
         onOpenUserHandled()
     }
     var pendingRevealTrack by remember { mutableStateOf<Long?>(null) }
-    LaunchedEffect(revealUser, revealTrackId) {
-        val user = revealUser ?: return@LaunchedEffect
+    LaunchedEffect(revealUser, revealPlaylist, revealTrackId) {
         tab = ScTab.DISCOVER
+        val playlist = revealPlaylist
+        val user = revealUser
+        if (playlist != null) {
+            routes.clear()
+            pendingRevealTrack = revealTrackId
+            routes.push(ScRoute.Playlist(playlist))
+            return@LaunchedEffect
+        }
+        if (user == null) return@LaunchedEffect
         routes.clear()
         pendingRevealTrack = revealTrackId
         routes.push(ScRoute.User(user))
@@ -218,13 +228,22 @@ internal fun SoundCloudScreen(
             runCatching { client.setFollowing(user.id, !was) }.onFailure { following = if (was) following + user.id else following - user.id; failed(it) }
         }
     }
-    val context = ScContext(client, currentTrackId, isPlaying, liked, onLike, onPlay, { routes.pushFromTouch(it) }, reposted, onRepost, following, onFollow)
+    var playOrigin by remember { mutableStateOf<com.olbyine.music.PlayOrigin?>(null) }
+    val context = ScContext(
+        client, currentTrackId, isPlaying, liked, onLike,
+        { tracks, index, shuffle -> onPlay(tracks, index, shuffle, playOrigin) },
+        { routes.pushFromTouch(it) }, reposted, onRepost, following, onFollow,
+        setOrigin = { playOrigin = it },
+    )
     CompositionLocalProvider(LocalSc provides context) {
         PageStack(routes, backEnabled = true, base = { ScHome(account, tab, { tab = it }, searchSeed, bottomPadding) }) { route ->
             val back: () -> Unit = { routes.pop() }
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).clickable(remember { MutableInteractionSource() }, indication = null) {}) {            when (route) {
                 is ScRoute.Web -> ScWebPage(route.url, route.title, client, back)
-                is ScRoute.Playlist -> ScPlaylistPage(route.playlist, bottomPadding, back)
+                is ScRoute.Playlist -> ScPlaylistPage(route.playlist, bottomPadding, back, pendingRevealTrack) {
+                    pendingRevealTrack = null
+                    onRevealHandled()
+                }
                 is ScRoute.User -> ScUserPage(route.user, bottomPadding, back, pendingRevealTrack) {
                     pendingRevealTrack = null
                     onRevealHandled()
@@ -596,7 +615,13 @@ private fun PlayButtons(tracks: List<ScTrack>) {
 }
 
 @Composable
-private fun ScPlaylistPage(target: ScPlaylist, bottomPadding: Dp, onBack: () -> Unit) {
+private fun ScPlaylistPage(
+    target: ScPlaylist,
+    bottomPadding: Dp,
+    onBack: () -> Unit,
+    revealTrackId: Long? = null,
+    onRevealed: () -> Unit = {},
+) {
     val sc = LocalSc.current ?: return
     var loaded by remember(target.urn) { mutableStateOf<ScPlaylist?>(null) }
     var error by remember(target.urn) { mutableStateOf<String?>(null) }
@@ -612,7 +637,28 @@ private fun ScPlaylistPage(target: ScPlaylist, bottomPadding: Dp, onBack: () -> 
     }
     val playlist = loaded ?: target
     val tracks = loaded?.tracks.orEmpty()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = bottomPadding + 24.dp)) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var handledReveal by remember { mutableStateOf(false) }
+    LaunchedEffect(revealTrackId, tracks) {
+        val id = revealTrackId ?: return@LaunchedEffect
+        if (handledReveal || tracks.isEmpty()) return@LaunchedEffect
+        val index = tracks.indexOfFirst { it.id == id }
+        if (index < 0) {
+            onRevealed()
+            return@LaunchedEffect
+        }
+        handledReveal = true
+        listState.scrollToItem(index + 1)
+        onRevealed()
+    }
+    LaunchedEffect(playlist.urn) {
+        sc.setOrigin(com.olbyine.music.PlayOrigin("sc:playlist", playlist.urn, playlist.title, scPlaylist = playlist))
+    }
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = bottomPadding + 24.dp),
+    ) {
         item(key = "header") {
             PageHeader(
                 playlist.title,
@@ -641,6 +687,7 @@ private fun ScUserPage(
     val showPlaylists = shelf == 2
     var playlists by remember(target.id) { mutableStateOf<List<ScPlaylist>?>(null) }
     LaunchedEffect(target.id) { runCatching { sc.client.user(target.id) }.onSuccess { user = it } }
+    LaunchedEffect(target.id) { sc.setOrigin(com.olbyine.music.PlayOrigin("sc:user", target.id.toString(), target.username)) }
     LaunchedEffect(target.id, showPlaylists) { if (showPlaylists && playlists == null) playlists = runCatching { sc.client.userPlaylists(target.id) }.getOrDefault(emptyList()) }
     val header: @Composable () -> Unit = {
         PageHeader(
