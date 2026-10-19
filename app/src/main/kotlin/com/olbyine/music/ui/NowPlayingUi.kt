@@ -57,6 +57,7 @@ import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.FormatQuote
 import androidx.compose.material.icons.rounded.OndemandVideo
 import androidx.compose.material.icons.rounded.FastRewind
@@ -196,6 +197,7 @@ internal fun PlayerPage(
     onMatchMetadata: () -> Unit,
     onPlayQueueIndex: (Int) -> Unit,
     onOpenLibrary: () -> Unit,
+    onRevealInLibrary: () -> Unit = {},
     onListening: (Boolean) -> Unit,
     onGrantAccess: () -> Unit,
     onOpenExternalApp: () -> Unit,
@@ -269,6 +271,7 @@ internal fun PlayerPage(
                     onFavorite = onFavorite,
                     onModeButton = openModeMenu,
                     onOpenLibrary = onOpenLibrary,
+                    onRevealInLibrary = onRevealInLibrary,
                     onQueue = { openQueue?.invoke() ?: run { queueVisible = true } },
                     onListening = onListening,
                     onOpenExternalApp = onOpenExternalApp,
@@ -355,6 +358,7 @@ private fun PlayerBody(
     onFavorite: () -> Unit,
     onModeButton: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
     onOpenLibrary: () -> Unit,
+    onRevealInLibrary: () -> Unit,
     onQueue: () -> Unit,
     onListening: (Boolean) -> Unit,
     onOpenExternalApp: () -> Unit,
@@ -368,7 +372,7 @@ private fun PlayerBody(
         if (maxWidth > maxHeight && maxHeight < 460.dp) {
             LandscapePlayerBody(
                 state, track, listening, maxHeight, shared, glass, onTogglePlay, onPrevious, onNext, onSeek, onLyrics,
-                onFavorite, onModeButton, onOpenLibrary, onQueue, onListening, onOpenExternalApp, onTransition, menu,
+                onFavorite, onModeButton, onOpenLibrary, onRevealInLibrary, onQueue, onListening, onOpenExternalApp, onTransition, menu,
             )
             return@BoxWithConstraints
         }
@@ -405,7 +409,15 @@ private fun PlayerBody(
                 onNext = onNext,
                 onModeButton = onModeButton,
                 modeEnabled = listening == null,
-                trailing = { SideGlyph(Icons.Rounded.LibraryMusic, "音乐库", onOpenLibrary, glass) },
+                trailing = {
+                        SideGlyph(
+                            Icons.Rounded.FolderOpen,
+                            "在文件夹中显示",
+                            onRevealInLibrary,
+                            glass,
+                            enabled = listening == null,
+                        )
+                    },
             )
             AnimatedVisibility(
                 visible = showPreview,
@@ -496,6 +508,7 @@ private fun LandscapePlayerBody(
     onFavorite: () -> Unit,
     onModeButton: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
     onOpenLibrary: () -> Unit,
+    onRevealInLibrary: () -> Unit,
     onQueue: () -> Unit,
     onListening: (Boolean) -> Unit,
     onOpenExternalApp: () -> Unit,
@@ -540,7 +553,15 @@ private fun LandscapePlayerBody(
                     onModeButton = onModeButton,
                     modeEnabled = listening == null,
                     playSize = if (height > 300.dp) 62.dp else 54.dp,
-                    trailing = { SideGlyph(Icons.Rounded.LibraryMusic, "音乐库", onOpenLibrary, glass) },
+                    trailing = {
+                        SideGlyph(
+                            Icons.Rounded.FolderOpen,
+                            "在文件夹中显示",
+                            onRevealInLibrary,
+                            glass,
+                            enabled = listening == null,
+                        )
+                    },
                 )
                 UtilityRow(
                     listening = listening != null,

@@ -268,6 +268,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val albums by viewModel.albums.collectAsState()
     val importProgress by viewModel.importProgress.collectAsState()
     val albumRequest by viewModel.albumRequest.collectAsState()
+    val trackReveal by viewModel.trackReveal.collectAsState()
     var playlistPickerFor by remember { mutableStateOf<Track?>(null) }
     val trackActions = remember(viewModel) {
         TrackActions(
@@ -772,6 +773,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onImportNeteasePlaylist = viewModel::openPlaylistImport,
                             onExternalLyrics = openListening,
                             albumRequest = albumRequest,
+                            revealTrackId = trackReveal,
+                            onRevealHandled = viewModel::clearTrackReveal,
                             onAlbumRequestHandled = viewModel::consumeAlbumRequest,
                             nav = libraryNav,
                             onAlbumStyle = viewModel::setAlbumStyle,
@@ -993,6 +996,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onMatchMetadata = { viewModel.matchMetadata(state.currentTrack) },
                             onPlayQueueIndex = viewModel::playQueueIndex,
                             onOpenLibrary = { viewModel.navigateTo(AppDestination.LIBRARY) },
+                            onRevealInLibrary = { state.currentTrack?.let(viewModel::revealInLibrary) },
                             onListening = setListening,
                             onGrantAccess = grantAccess,
                             onOpenExternalApp = openExternalApp,

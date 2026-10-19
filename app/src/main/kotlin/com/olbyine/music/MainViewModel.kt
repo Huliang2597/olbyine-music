@@ -226,6 +226,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val savedPlayback = application.getSharedPreferences("native_playback", Application.MODE_PRIVATE)
     private val libraryPreferences = application.getSharedPreferences("native_library_view", Application.MODE_PRIVATE)
 
+    private val _trackReveal = MutableStateFlow<String?>(null)
+    val trackReveal: StateFlow<String?> = _trackReveal
     private val _collectionResume = MutableStateFlow<Map<String, CollectionResumePoint>>(emptyMap())
     val collectionResume: StateFlow<Map<String, CollectionResumePoint>> = _collectionResume
     private val _activeCollection = MutableStateFlow<String?>(null)
@@ -418,6 +420,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setLibrarySortMode(value: LibrarySortMode) {
         sortMode.value = value
         libraryPreferences.edit().putString(KEY_SORT_MODE, value.name).apply()
+    }
+
+    fun revealInLibrary(track: Track) {
+        if (track.isOnline) {
+            message.value = "在线歌曲不在本地音乐库中"
+            return
+        }
+        _trackReveal.value = track.id
+        navigateTo(AppDestination.LIBRARY)
+    }
+
+    fun clearTrackReveal() {
+        _trackReveal.value = null
     }
 
     fun setLibraryFolderId(value: String?) {

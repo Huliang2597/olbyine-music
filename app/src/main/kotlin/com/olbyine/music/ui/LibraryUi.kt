@@ -287,6 +287,8 @@ internal fun LibraryScreen(
     onExternalLyrics: () -> Unit,
     albumRequest: String? = null,
     onAlbumRequestHandled: () -> Unit = {},
+    revealTrackId: String? = null,
+    onRevealHandled: () -> Unit = {},
     nav: LibraryNav = rememberLibraryNav(state.libraryFilter == LibraryFilter.FAVORITES),
     onAlbumStyle: (String) -> Unit = {},
 ) {
@@ -300,6 +302,19 @@ internal fun LibraryScreen(
         onFilter(LibraryFilter.ALL)
         albumKey = request
         onAlbumRequestHandled()
+    }
+    LaunchedEffect(revealTrackId, state.libraryLoaded) {
+        val request = revealTrackId ?: return@LaunchedEffect
+        val target = state.tracks.firstOrNull { it.id == request }
+        if (target == null) {
+            if (state.libraryLoaded) onRevealHandled()
+            return@LaunchedEffect
+        }
+        if (section != LibrarySection.FOLDERS) section = LibrarySection.FOLDERS
+        albumKey = null
+        onPlaylist(null)
+        onFilter(LibraryFilter.ALL)
+        onFolder(target.folderId ?: "")
     }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var creatingPlaylist by remember { mutableStateOf(false) }
@@ -630,6 +645,8 @@ internal fun LibraryScreen(
                                 topContentPadding = topPadding,
                                 bottomContentPadding = bottomContentPadding,
                                 header = header,
+                                revealIndex = revealTrackId?.let { id -> displayedTracks.indexOfFirst { it.id == id } }?.takeIf { it >= 0 },
+                                onRevealed = onRevealHandled,
                             )
                         } else TrackCollection(
                             tracks = displayedTracks,
@@ -645,6 +662,8 @@ internal fun LibraryScreen(
                             onPlayTracks = onPlayTracks,
                             header = header,
                             empty = empty,
+                            revealId = revealTrackId,
+                            onRevealed = onRevealHandled,
                             topContentPadding = topPadding,
                             bottomContentPadding = bottomContentPadding,
                         )
@@ -1139,6 +1158,8 @@ private fun TrackCollection(
     empty: (@Composable () -> Unit)?,
     topContentPadding: Dp,
     bottomContentPadding: Dp,
+    revealId: String? = null,
+    onRevealed: () -> Unit = {},
 ) {
     val bottom = bottomContentPadding + 20.dp
     val haptics = rememberHaptics()
@@ -1156,7 +1177,16 @@ private fun TrackCollection(
     }
     if (viewMode == LibraryViewMode.GRID && empty == null) {
         val gridState = rememberLazyGridState()
-        LaunchedEffect(sortMode, tracks.firstOrNull()?.id) { gridState.scrollToItem(0) }
+        LaunchedEffect(sortMode, tracks.firstOrNull()?.id) {
+            if (revealId == null) gridState.scrollToItem(0)
+        }
+        LaunchedEffect(revealId, tracks) {
+            val id = revealId ?: return@LaunchedEffect
+            val index = tracks.indexOfFirst { it.id == id }
+            if (index < 0) return@LaunchedEffect
+            gridState.scrollToItem(index + 1)
+            onRevealed()
+        }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(150.dp),
             state = gridState,
@@ -1185,7 +1215,19 @@ private fun TrackCollection(
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    LaunchedEffect(callbacks.activePlaylist?.id, tracks.firstOrNull()?.id, sortMode) { listState.scrollToItem(0) }
+    LaunchedEffect(callbacks.activePlaylist?.id, tracks.firstOrNull()?.id, sortMode) {
+        if (revealId == null) listState.scrollToItem(0)
+    }
+    var handledReveal by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(revealId, tracks) {
+        val id = revealId ?: return@LaunchedEffect
+        if (handledReveal == id) return@LaunchedEffect
+        val index = tracks.indexOfFirst { it.id == id }
+        if (index < 0) return@LaunchedEffect
+        handledReveal = id
+        listState.scrollToItem(index + 1)
+        onRevealed()
+    }
     val letters = remember(tracks, sortMode, keys) {
         tracks.mapIndexed { index, track ->
             val key = keys[track.id]?.forMode(sortMode) ?: SortKeys.cachedOrPlain(track.title)
