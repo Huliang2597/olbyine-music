@@ -16,6 +16,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1207,6 +1208,7 @@ private fun TrackCollection(
         haptics.heavy(HapticArea.SCRUB)
         selection.toggle(track.id)
     }
+    val revealOffset = with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }
     if (viewMode == LibraryViewMode.GRID && empty == null) {
         val gridState = rememberLazyGridState()
         LaunchedEffect(sortMode, tracks.firstOrNull()?.id) {
@@ -1220,6 +1222,7 @@ private fun TrackCollection(
                 return@LaunchedEffect
             }
             gridState.scrollToItem(index + 1)
+            gridState.scrollBy(-revealOffset.toFloat())
             onRevealed()
         }
         LazyVerticalGrid(
@@ -1264,6 +1267,7 @@ private fun TrackCollection(
         }
         handledReveal = id
         listState.scrollToItem(index + 1)
+        listState.scrollBy(-revealOffset.toFloat())
         onRevealed()
     }
     val letters = remember(tracks, sortMode, keys) {

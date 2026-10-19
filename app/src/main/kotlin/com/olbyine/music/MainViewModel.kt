@@ -192,6 +192,7 @@ data class PlayOrigin(
     val kind: String,
     val id: String,
     val title: String = "",
+    val cover: String? = null,
     val scPlaylist: com.olbyine.music.data.ScPlaylist? = null,
     val ndAlbum: com.olbyine.music.data.NdAlbum? = null,
     val ndPlaylist: com.olbyine.music.data.NdPlaylist? = null,
@@ -204,7 +205,7 @@ private fun PlayOrigin.scStubPlaylist(): com.olbyine.music.data.ScPlaylist? {
         id = playlistId,
         title = title.ifBlank { "歌单" },
         user = com.olbyine.music.data.ScUser(0, "", null),
-        artworkUrl = null,
+        artworkUrl = cover,
         trackCount = 0,
         album = false,
     )
@@ -217,7 +218,7 @@ private fun PlayOrigin.ndStubAlbum(): com.olbyine.music.data.NdAlbum? {
         name = title.ifBlank { "专辑" },
         artist = "",
         artistId = null,
-        coverArt = null,
+        coverArt = cover,
         songCount = 0,
         year = 0,
         durationSec = 0L,
@@ -227,7 +228,7 @@ private fun PlayOrigin.ndStubAlbum(): com.olbyine.music.data.NdAlbum? {
 
 private fun PlayOrigin.ndStubPlaylist(): com.olbyine.music.data.NdPlaylist? {
     if (kind != "nd:playlist" || id.isBlank()) return null
-    return com.olbyine.music.data.NdPlaylist(id = id, name = title.ifBlank { "歌单" }, songCount = 0, coverArt = null, owner = "")
+    return com.olbyine.music.data.NdPlaylist(id = id, name = title.ifBlank { "歌单" }, songCount = 0, coverArt = cover, owner = "")
 }
 
 data class LibraryReveal(
@@ -503,19 +504,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun persistPlayOrigin(origin: PlayOrigin?) {
         val editor = savedPlayback.edit()
         if (origin == null) {
-            editor.remove(KEY_ORIGIN_KIND).remove(KEY_ORIGIN_ID).remove(KEY_ORIGIN_TITLE).apply()
+            editor.remove(KEY_ORIGIN_KIND).remove(KEY_ORIGIN_ID).remove(KEY_ORIGIN_TITLE).remove(KEY_ORIGIN_COVER).apply()
             return
         }
         editor.putString(KEY_ORIGIN_KIND, origin.kind)
             .putString(KEY_ORIGIN_ID, origin.id)
             .putString(KEY_ORIGIN_TITLE, origin.title)
+            .putString(KEY_ORIGIN_COVER, origin.cover)
             .apply()
     }
 
     private fun readPersistedOrigin(): PlayOrigin? {
         val kind = savedPlayback.getString(KEY_ORIGIN_KIND, null)?.takeIf(String::isNotBlank) ?: return null
         val id = savedPlayback.getString(KEY_ORIGIN_ID, null).orEmpty()
-        return PlayOrigin(kind = kind, id = id, title = savedPlayback.getString(KEY_ORIGIN_TITLE, null).orEmpty())
+        return PlayOrigin(
+            kind = kind,
+            id = id,
+            title = savedPlayback.getString(KEY_ORIGIN_TITLE, null).orEmpty(),
+            cover = savedPlayback.getString(KEY_ORIGIN_COVER, null),
+        )
     }
 
     fun revealInLibrary(track: Track) {
@@ -538,7 +545,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         com.olbyine.music.data.NeteasePlaylistSummary(
                             originId,
                             origin?.title.orEmpty(),
-                            null,
+                            origin?.cover,
                             0,
                             "",
                             liked = false,
@@ -2003,7 +2010,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 netease.collectionStream(playlist).collect { batch ->
                     if (!batch.complete && batch.songs.size < best.size) return@collect
                     best = batch.songs
-                    show(batch.songs, loading = false, partial = batch.songs.size < playlist.trackCount)
+                    val summary = batch.summary.copy(
+                        kind = playlist.kind,
+                        liked = playlist.liked || batch.summary.liked,
+                        own = playlist.own,
+                        name = batch.summary.name.ifBlank { playlist.name },
+                        coverUrl = batch.summary.coverUrl ?: playlist.coverUrl,
+                    )
+                    if (_netease.value.openPlaylist?.id == playlist.id) {
+                        _netease.value = _netease.value.copy(openPlaylist = summary)
+                    }
+                    show(batch.songs, loading = false, partial = batch.songs.size < summary.trackCount)
                 }
                 if (_netease.value.openPlaylist?.id == playlist.id) _netease.value = _netease.value.copy(songsPartial = false)
             } catch (error: Throwable) {
@@ -2091,7 +2108,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             source?.let { key ->
                 val parts = key.split(":")
                 if (parts.size >= 3) {
-                    PlayOrigin(kind = parts[0] + ":" + parts[1], id = parts[2], title = _netease.value.openPlaylist?.name.orEmpty())
+                    val open = _netease.value.openPlaylist
+                    PlayOrigin(
+                        kind = parts[0] + ":" + parts[1],
+                        id = parts[2],
+                        title = open?.name.orEmpty(),
+                        cover = open?.coverUrl,
+                    )
                 } else null
             },
         )
@@ -2812,6 +2835,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     const val KEY_ORIGIN_KIND = "origin_kind"
     const val KEY_ORIGIN_ID = "origin_id"
     const val KEY_ORIGIN_TITLE = "origin_title"
+    const val KEY_ORIGIN_COVER = "origin_cover"
     const val KEY_RESUME_POINTS = "resume_points"
     const val KEY_ACTIVE_COLLECTION = "active_collection"
     const val KEY_ACTIVE_QUEUE = "active_queue_ids"

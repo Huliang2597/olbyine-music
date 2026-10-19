@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -427,6 +428,7 @@ private fun <T> Paged(
     }
     LaunchedEffect(key) { more() }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val revealOffset = with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }
     var handledReveal by remember { mutableStateOf(false) }
     LaunchedEffect(items.size, revealMatch) {
         val match = revealMatch ?: return@LaunchedEffect
@@ -435,6 +437,7 @@ private fun <T> Paged(
         if (index < 0) return@LaunchedEffect
         handledReveal = true
         listState.scrollToItem(index + if (header != null) 1 else 0)
+        listState.scrollBy(-revealOffset.toFloat())
         onRevealed()
     }
     LazyColumn(
@@ -638,6 +641,7 @@ private fun ScPlaylistPage(
     val playlist = loaded ?: target
     val tracks = loaded?.tracks.orEmpty()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val revealOffset = with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }
     var handledReveal by remember { mutableStateOf(false) }
     LaunchedEffect(revealTrackId, tracks) {
         val id = revealTrackId ?: return@LaunchedEffect
@@ -649,10 +653,13 @@ private fun ScPlaylistPage(
         }
         handledReveal = true
         listState.scrollToItem(index + 1)
+        listState.scrollBy(-revealOffset.toFloat())
         onRevealed()
     }
     LaunchedEffect(playlist.urn) {
-        sc.setOrigin(com.olbyine.music.PlayOrigin("sc:playlist", playlist.urn, playlist.title, scPlaylist = playlist))
+        sc.setOrigin(
+            com.olbyine.music.PlayOrigin("sc:playlist", playlist.urn, playlist.title, cover = playlist.artworkUrl, scPlaylist = playlist),
+        )
     }
     LazyColumn(
         Modifier.fillMaxSize(),

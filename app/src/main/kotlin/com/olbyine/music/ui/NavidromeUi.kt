@@ -2,6 +2,7 @@ package com.olbyine.music.ui
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -509,11 +510,16 @@ private fun NdAlbumPage(
 ) {
     val nd = LocalNd.current ?: return
     val (state, retry) = rememberLoad(album.id) { nd.client.album(album.id) }
+    val loadedAlbum = state.value?.first
     val songs = state.value?.second
-    LaunchedEffect(album.id) {
-        nd.setOrigin(com.olbyine.music.PlayOrigin("nd:album", album.id, album.name, ndAlbum = album))
+    val shown = loadedAlbum ?: album
+    LaunchedEffect(album.id, loadedAlbum) {
+        nd.setOrigin(
+            com.olbyine.music.PlayOrigin("nd:album", album.id, shown.name, cover = shown.coverArt, ndAlbum = shown),
+        )
     }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val revealOffset = with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }
     var handledReveal by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(revealSongId, revealTitle, songs) {
         val id = revealSongId ?: revealTitle ?: return@LaunchedEffect
@@ -524,11 +530,12 @@ private fun NdAlbumPage(
         }
         if (index < 0) return@LaunchedEffect
         handledReveal = id
-        listState.scrollToItem(index + 1)
+        listState.scrollToItem(index + 2)
+        listState.scrollBy(-revealOffset.toFloat())
         onRevealed()
     }
     Column(Modifier.fillMaxSize()) {
-        NdPageTop(album.name, album.artist, onBack)
+        NdPageTop(shown.name, shown.artist, onBack)
         LazyColumn(
             Modifier.fillMaxSize(),
             state = listState,
@@ -536,15 +543,15 @@ private fun NdAlbumPage(
         ) {
             item(key = "head") {
                 Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    NdCover(nd.client.coverUrl(album.coverArt, 600), Modifier.size(132.dp), Icons.Rounded.Album, corner = 18.dp)
+                    NdCover(nd.client.coverUrl(shown.coverArt, 600), Modifier.size(132.dp), Icons.Rounded.Album, corner = 18.dp)
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(album.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        Text(album.artist, Modifier.clip(CircleShape).clickable {
-                            album.artistId?.let { nd.open(NdRoute.ArtistPage(NdArtist(it, album.artist, 0, null))) }
+                        Text(shown.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(shown.artist, Modifier.clip(CircleShape).clickable {
+                            shown.artistId?.let { nd.open(NdRoute.ArtistPage(NdArtist(it, shown.artist, 0, null))) }
                         }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
                         Text(
-                            listOfNotNull(album.year.takeIf { it > 0 }?.toString(), "${(songs?.size ?: album.songCount)} 首", formatTotalDuration(album.durationSec * 1000)).joinToString(" · "),
+                            listOfNotNull(shown.year.takeIf { it > 0 }?.toString(), "${(songs?.size ?: shown.songCount)} 首", formatTotalDuration(shown.durationSec * 1000)).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
