@@ -154,6 +154,9 @@ internal fun SoundCloudScreen(
     onPlay: (List<ScTrack>, Int, Boolean) -> Unit,
     openUser: ScUser? = null,
     onOpenUserHandled: () -> Unit = {},
+    revealUser: ScUser? = null,
+    revealTrackId: Long? = null,
+    onRevealHandled: () -> Unit = {},
 ) {
     val account by client.account.collectAsState()
     var tab by rememberSaveable { mutableStateOf(ScTab.DISCOVER) }
@@ -170,6 +173,14 @@ internal fun SoundCloudScreen(
         val user = openUser ?: return@LaunchedEffect
         if ((routes.top as? ScRoute.User)?.user?.id != user.id) routes.push(ScRoute.User(user))
         onOpenUserHandled()
+    }
+    var pendingRevealTrack by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(revealUser, revealTrackId) {
+        val user = revealUser ?: return@LaunchedEffect
+        tab = ScTab.DISCOVER
+        routes.clear()
+        pendingRevealTrack = revealTrackId
+        routes.push(ScRoute.User(user))
     }
     var liked by remember(account) { mutableStateOf<Set<Long>>(emptySet()) }
     LaunchedEffect(account) { liked = if (account != null) runCatching { client.likedIds() }.getOrDefault(emptySet()) else emptySet() }
@@ -214,7 +225,10 @@ internal fun SoundCloudScreen(
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).clickable(remember { MutableInteractionSource() }, indication = null) {}) {            when (route) {
                 is ScRoute.Web -> ScWebPage(route.url, route.title, client, back)
                 is ScRoute.Playlist -> ScPlaylistPage(route.playlist, bottomPadding, back)
-                is ScRoute.User -> ScUserPage(route.user, bottomPadding, back)
+                is ScRoute.User -> ScUserPage(route.user, bottomPadding, back, pendingRevealTrack) {
+                    pendingRevealTrack = null
+                    onRevealHandled()
+                }
                 is ScRoute.Genre -> ScTrackListPage("#${route.tag}", "曲风 · 热门", bottomPadding, back) { next -> client.genre(route.tag, next) }
                 is ScRoute.Conversation -> ScConversationPage(route.id, route.user, bottomPadding, back)
                 is ScRoute.People -> ScPeoplePage(route.user, route.followers, bottomPadding, back)
@@ -364,6 +378,8 @@ private fun <T> Paged(
     bottomPadding: Dp,
     header: (@Composable () -> Unit)? = null,
     load: suspend (next: String?) -> com.olbyine.music.data.ScPage<T>,
+    revealMatch: ((T) -> Boolean)? = null,
+    onRevealed: () -> Unit = {},
     row: @Composable (List<T>, Int) -> Unit,
 ) {
     val items = remember(key) { mutableStateListOf<T>() }
@@ -391,7 +407,22 @@ private fun <T> Paged(
         }
     }
     LaunchedEffect(key) { more() }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = bottomPadding + 24.dp)) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var handledReveal by remember { mutableStateOf(false) }
+    LaunchedEffect(items.size, revealMatch) {
+        val match = revealMatch ?: return@LaunchedEffect
+        if (handledReveal) return@LaunchedEffect
+        val index = items.indexOfFirst(match)
+        if (index < 0) return@LaunchedEffect
+        handledReveal = true
+        listState.scrollToItem(index + if (header != null) 1 else 0)
+        onRevealed()
+    }
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = bottomPadding + 24.dp),
+    ) {
         if (header != null) item(key = "header") { header() }
         items(items.size, key = { "$key:$it" }) { index ->
             if (index >= items.size - 6) LaunchedEffect(items.size) { more() }
@@ -597,7 +628,13 @@ private fun ScPlaylistPage(target: ScPlaylist, bottomPadding: Dp, onBack: () -> 
 }
 
 @Composable
-private fun ScUserPage(target: ScUser, bottomPadding: Dp, onBack: () -> Unit) {
+private fun ScUserPage(
+    target: ScUser,
+    bottomPadding: Dp,
+    onBack: () -> Unit,
+    revealTrackId: Long? = null,
+    onRevealed: () -> Unit = {},
+) {
     val sc = LocalSc.current ?: return
     var user by remember(target.id) { mutableStateOf(target) }
     var shelf by rememberSaveable(target.id) { mutableStateOf(0) }
@@ -635,7 +672,14 @@ private fun ScUserPage(target: ScUser, bottomPadding: Dp, onBack: () -> Unit) {
         }
     }
     if (!showPlaylists) {
-        Paged(key = "user:${target.id}:$shelf", bottomPadding = bottomPadding, header = header, load = { next -> if (shelf == 1) sc.client.userLikes(target.id, next) else sc.client.userTracks(target.id, next) }) { items, index ->
+        Paged(
+            key = "user:${target.id}:$shelf",
+            bottomPadding = bottomPadding,
+            header = header,
+            load = { next -> if (shelf == 1) sc.client.userLikes(target.id, next) else sc.client.userTracks(target.id, next) },
+            revealMatch = revealTrackId?.let { id -> { track: ScTrack -> track.id == id } },
+            onRevealed = onRevealed,
+        ) { items, index ->
             ScTrackRow(items, index)
         }
     } else {

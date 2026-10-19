@@ -117,6 +117,8 @@ internal fun NeteaseScreen(
     onOnlinePlayback: (Boolean) -> Unit,
     onSignOut: () -> Unit,
     client: com.olbyine.music.data.NeteaseClient? = null,
+    revealSongId: Long? = null,
+    onRevealHandled: () -> Unit = {},
 ) {
     val open = state.openPlaylist
     val pages = rememberPageStack<NeteasePlaylistSummary>()
@@ -144,6 +146,8 @@ internal fun NeteaseScreen(
                 onPlay = onPlay,
                 onLike = onLike,
                 onSaveLocal = onSaveLocal,
+                revealSongId = revealSongId,
+                onRevealed = onRevealHandled,
             )
         }
     }
@@ -372,6 +376,8 @@ private fun NeteasePlaylistPage(
     onPlay: (List<NeteaseSong>, Int, Boolean) -> Unit,
     onLike: (Long) -> Unit,
     onSaveLocal: () -> Unit,
+    revealSongId: Long? = null,
+    onRevealed: () -> Unit = {},
 ) {
     val allSongs = state.songs
     var query by androidx.compose.runtime.saveable.rememberSaveable(playlist.id) { mutableStateOf("") }
@@ -383,8 +389,23 @@ private fun NeteasePlaylistPage(
     val play: (Int, Boolean) -> Unit = { index, shuffle ->
         if (scopedPlay != null) scopedPlay(resumeKey, songs, index, shuffle, 0L) else onPlay(songs, index, shuffle)
     }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var handledReveal by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(revealSongId, songs) {
+        val id = revealSongId ?: return@LaunchedEffect
+        if (handledReveal == id) return@LaunchedEffect
+        val index = songs.indexOfFirst { it.id == id }
+        if (index < 0) {
+            if (songs.isNotEmpty()) onRevealed()
+            return@LaunchedEffect
+        }
+        handledReveal = id
+        listState.scrollToItem(index + 1)
+        onRevealed()
+    }
     androidx.compose.foundation.lazy.LazyColumn(
         Modifier.fillMaxSize(),
+        state = listState,
         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = bottomContentPadding + 24.dp),
     ) {
         item(key = "header") {

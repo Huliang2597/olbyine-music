@@ -1183,7 +1183,10 @@ private fun TrackCollection(
         LaunchedEffect(revealId, tracks) {
             val id = revealId ?: return@LaunchedEffect
             val index = tracks.indexOfFirst { it.id == id }
-            if (index < 0) return@LaunchedEffect
+            if (index < 0) {
+                if (tracks.isNotEmpty()) onRevealed()
+                return@LaunchedEffect
+            }
             gridState.scrollToItem(index + 1)
             onRevealed()
         }
@@ -1223,7 +1226,10 @@ private fun TrackCollection(
         val id = revealId ?: return@LaunchedEffect
         if (handledReveal == id) return@LaunchedEffect
         val index = tracks.indexOfFirst { it.id == id }
-        if (index < 0) return@LaunchedEffect
+        if (index < 0) {
+            if (tracks.isNotEmpty()) onRevealed()
+            return@LaunchedEffect
+        }
         handledReveal = id
         listState.scrollToItem(index + 1)
         onRevealed()

@@ -188,6 +188,15 @@ data class MainUiState(
     val libraryLoaded: Boolean = false,
 )
 
+data class OnlineReveal(
+    val provider: String,
+    val trackId: String,
+    val title: String = "",
+    val artist: String = "",
+    val songId: Long = 0,
+    val scTrackId: Long = 0,
+)
+
 data class CollectionResumePoint(
     val songId: Long,
     val title: String,
@@ -228,6 +237,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _trackReveal = MutableStateFlow<String?>(null)
     val trackReveal: StateFlow<String?> = _trackReveal
+    private val _onlineReveal = MutableStateFlow<OnlineReveal?>(null)
+    val onlineReveal: StateFlow<OnlineReveal?> = _onlineReveal
     private val _collectionResume = MutableStateFlow<Map<String, CollectionResumePoint>>(emptyMap())
     val collectionResume: StateFlow<Map<String, CollectionResumePoint>> = _collectionResume
     private val _activeCollection = MutableStateFlow<String?>(null)
@@ -423,12 +434,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun revealInLibrary(track: Track) {
-        if (track.isOnline) {
-            message.value = "在线歌曲不在本地音乐库中"
+        if (!track.isOnline) {
+            _trackReveal.value = track.id
+            navigateTo(AppDestination.LIBRARY)
             return
         }
-        _trackReveal.value = track.id
-        navigateTo(AppDestination.LIBRARY)
+        when {
+            track.id.startsWith("ncm:") -> {
+                val songId = track.id.removePrefix("ncm:").toLongOrNull() ?: return
+                _onlineReveal.value = OnlineReveal(provider = "netease", trackId = track.id, songId = songId, title = track.title)
+                viewModelScope.launch {
+                    val albumId = runCatching { netease.song(songId)?.albumId?.takeIf { it > 0 } }.getOrNull()
+                    if (albumId == null) {
+                        _onlineReveal.value = null
+                        message.value = "这首歌没有可打开的专辑页"
+                    }
+                    if (albumId != null) {
+                        openNeteasePlaylist(
+                            com.olbyine.music.data.NeteasePlaylistSummary(
+                                albumId,
+                                "专辑",
+                                null,
+                                0,
+                                "",
+                                liked = false,
+                                own = false,
+                                kind = com.olbyine.music.data.NeteaseCollectionKind.ALBUM,
+                            ),
+                        )
+                    }
+                }
+            }
+            track.id.startsWith("sc:") -> {
+                val scId = track.id.removePrefix("sc:").toLongOrNull() ?: return
+                _onlineReveal.value = OnlineReveal(provider = "soundcloud", trackId = track.id, scTrackId = scId, title = track.title)
+            }
+            else -> _onlineReveal.value = OnlineReveal(provider = "navidrome", trackId = track.id, title = track.title, artist = track.artist)
+        }
+    }
+
+    fun clearOnlineReveal() {
+        _onlineReveal.value = null
     }
 
     fun clearTrackReveal() {

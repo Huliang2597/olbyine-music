@@ -41,6 +41,7 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -92,9 +93,28 @@ internal fun NavidromeScreen(
     currentTrackId: String?,
     isPlaying: Boolean,
     onPlay: (List<NdSong>, Int, Boolean) -> Unit,
+    revealTitle: String? = null,
+    onRevealHandled: () -> Unit = {},
 ) {
     val server by client.server.collectAsState()
+    var pendingSong by remember { mutableStateOf<String?>(null) }
     val routes = rememberPageStack<NdRoute>()
+    LaunchedEffect(revealTitle) {
+        val title = revealTitle ?: return@LaunchedEffect
+        val found = runCatching { client.search(title) }.getOrNull()
+        val song = found?.songs?.firstOrNull { it.title.equals(title, ignoreCase = true) } ?: found?.songs?.firstOrNull()
+        val albumId = song?.albumId
+        if (albumId != null) {
+            val album = found?.albums?.firstOrNull { it.id == albumId }
+                ?: runCatching { client.album(albumId).first }.getOrNull()
+            if (album != null) {
+                pendingSong = song.id
+                routes.clear()
+                routes.pushFromTouch(NdRoute.AlbumPage(album))
+            }
+        }
+        onRevealHandled()
+    }
     val context = NdContext(client, currentTrackId, isPlaying, onPlay) { routes.pushFromTouch(it) }
     CompositionLocalProvider(LocalNd provides context) {
         if (server == null) {
@@ -110,7 +130,7 @@ internal fun NavidromeScreen(
                         .clickable(remember { MutableInteractionSource() }, indication = null) {},
                 ) {
                     when (route) {
-                        is NdRoute.AlbumPage -> NdAlbumPage(route.album, bottomPadding, back)
+                        is NdRoute.AlbumPage -> NdAlbumPage(route.album, bottomPadding, back, pendingSong) { pendingSong = null }
                         is NdRoute.ArtistPage -> NdArtistPage(route.artist, bottomPadding, back)
                         is NdRoute.PlaylistPage -> NdPlaylistPage(route.playlist, bottomPadding, back)
                     }
@@ -458,13 +478,34 @@ private fun NdPageTop(title: String, subtitle: String?, onBack: () -> Unit) {
 }
 
 @Composable
-private fun NdAlbumPage(album: NdAlbum, bottomPadding: Dp, onBack: () -> Unit) {
+private fun NdAlbumPage(
+    album: NdAlbum,
+    bottomPadding: Dp,
+    onBack: () -> Unit,
+    revealSongId: String? = null,
+    onRevealed: () -> Unit = {},
+) {
     val nd = LocalNd.current ?: return
     val (state, retry) = rememberLoad(album.id) { nd.client.album(album.id) }
     val songs = state.value?.second
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var handledReveal by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(revealSongId, songs) {
+        val id = revealSongId ?: return@LaunchedEffect
+        if (handledReveal == id) return@LaunchedEffect
+        val index = songs?.indexOfFirst { it.id == id } ?: -1
+        if (index < 0) return@LaunchedEffect
+        handledReveal = id
+        listState.scrollToItem(index + 1)
+        onRevealed()
+    }
     Column(Modifier.fillMaxSize()) {
         NdPageTop(album.name, album.artist, onBack)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = bottomPadding + 24.dp)) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            state = listState,
+            contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = bottomPadding + 24.dp),
+        ) {
             item(key = "head") {
                 Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     NdCover(nd.client.coverUrl(album.coverArt, 600), Modifier.size(132.dp), Icons.Rounded.Album, corner = 18.dp)

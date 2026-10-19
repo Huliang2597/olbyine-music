@@ -269,6 +269,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val importProgress by viewModel.importProgress.collectAsState()
     val albumRequest by viewModel.albumRequest.collectAsState()
     val trackReveal by viewModel.trackReveal.collectAsState()
+    val onlineReveal by viewModel.onlineReveal.collectAsState()
+    var scRevealUser by remember { mutableStateOf<com.olbyine.music.data.ScUser?>(null) }
     var playlistPickerFor by remember { mutableStateOf<Track?>(null) }
     val trackActions = remember(viewModel) {
         TrackActions(
@@ -283,6 +285,14 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     var scCommentsFor by remember { mutableStateOf<Pair<Long, String>?>(null) }
     val openScComments: (Long, String) -> Unit = { id, title -> scCommentsFor = id to title }
     var streamingProvider by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("netease") }
+    LaunchedEffect(onlineReveal) {
+        val request = onlineReveal ?: return@LaunchedEffect
+        streamingProvider = request.provider
+        viewModel.navigateTo(AppDestination.ONLINE)
+        if (request.provider == "soundcloud" && request.scTrackId > 0) {
+            scRevealUser = runCatching { viewModel.soundCloud.trackInfo(request.scTrackId).second }.getOrNull()
+        }
+    }
     var scSearch by remember { mutableStateOf<String?>(null) }
     val touchOrigin = AppTouchOrigin
     val ncmStack = rememberPageStack<NcmRoute>()
@@ -705,6 +715,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                     currentTrackId = state.currentTrack?.id,
                                     isPlaying = state.playback.isPlaying,
                                     onPlay = { songs, index, shuffle -> runPlaybackAction { viewModel.playNavidrome(songs, index, shuffle) } },
+                                    revealTitle = onlineReveal?.takeIf { it.provider == "navidrome" }?.title,
+                                    onRevealHandled = viewModel::clearOnlineReveal,
                                 )
                             } else if (provider == "soundcloud") {
                                 SoundCloudScreen(
@@ -716,6 +728,12 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                     onSearchHandled = { scSearch = null },
                                     openUser = scOpenRequest as? com.olbyine.music.data.ScUser,
                                     onOpenUserHandled = { scOpenRequest = null },
+                                    revealUser = scRevealUser,
+                                    revealTrackId = onlineReveal?.takeIf { it.provider == "soundcloud" }?.scTrackId,
+                                    onRevealHandled = {
+                                        scRevealUser = null
+                                        viewModel.clearOnlineReveal()
+                                    },
                                     onPlay = { tracks, index, shuffle -> runPlaybackAction { viewModel.playSoundCloud(tracks, index, shuffle) } },
                                 )
                             } else {
@@ -735,6 +753,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onOnlinePlayback = viewModel::setNeteaseOnline,
                             onSignOut = viewModel::signOutNetease,
                             client = viewModel.neteaseClient,
+                            revealSongId = onlineReveal?.takeIf { it.provider == "netease" }?.songId,
+                            onRevealHandled = viewModel::clearOnlineReveal,
                         )
                             }
                             }
