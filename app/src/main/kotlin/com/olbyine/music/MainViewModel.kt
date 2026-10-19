@@ -422,6 +422,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val parsedLyrics: StateFlow<LyricsDocument> = app.lyricsHub.document
 
     init {
+        _collectionResume.value = readResumePoints()
+        readActiveCollection()
         if (settingsRepository.settings.value.autoUpdateCheck) checkForUpdates()
         restorePlaybackQueue()
         persistPlaybackPosition()
@@ -438,6 +440,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _activeCollection.value = null
                     activeQueueIds = emptySet()
                     activeSongByTrack = emptyMap()
+                    persistActiveCollection()
                     return@collect
                 }
                 val mediaId = state.currentMediaId ?: return@collect
@@ -453,6 +456,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     positionMs = state.positionMs.coerceAtLeast(0L),
                     at = now,
                 ))
+                persistResumePoints()
             }
         }
     }
@@ -2096,6 +2100,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             (state.localMatches[song.id] ?: com.olbyine.music.data.NeteaseSong.trackId(song.id)).let { it to song.id }
         }.toMap()
         activeCollectionAt = System.currentTimeMillis()
+        persistActiveCollection()
         playback.playQueue(queue, if (shuffle) queue.indices.random() else start)
         if (startMs > 1_000L) viewModelScope.launch {
             delay(700)
@@ -2435,6 +2440,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         message.value = null
     }
 
+    private fun persistResumePoints() {
+        val rows = org.json.JSONObject()
+        _collectionResume.value.forEach { (key, point) ->
+            rows.put(
+                key,
+                org.json.JSONObject()
+                    .put("songId", point.songId)
+                    .put("title", point.title)
+                    .put("positionMs", point.positionMs)
+                    .put("at", point.at),
+            )
+        }
+        savedPlayback.edit().putString(KEY_RESUME_POINTS, rows.toString()).apply()
+    }
+
+    private fun readResumePoints(): Map<String, CollectionResumePoint> {
+        val raw = savedPlayback.getString(KEY_RESUME_POINTS, null)?.takeIf(String::isNotBlank) ?: return emptyMap()
+        return runCatching {
+            val rows = org.json.JSONObject(raw)
+            rows.keys().asSequence().mapNotNull { key ->
+                val row = rows.optJSONObject(key) ?: return@mapNotNull null
+                val songId = row.optLong("songId", 0L)
+                if (songId <= 0L) return@mapNotNull null
+                key to CollectionResumePoint(
+                    songId = songId,
+                    title = row.optString("title"),
+                    positionMs = row.optLong("positionMs", 0L),
+                    at = row.optLong("at", 0L),
+                )
+            }.toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun persistActiveCollection() {
+        val key = _activeCollection.value
+        val editor = savedPlayback.edit()
+        if (key == null) {
+            editor.remove(KEY_ACTIVE_COLLECTION).remove(KEY_ACTIVE_QUEUE).remove(KEY_ACTIVE_SONG_MAP).apply()
+            return
+        }
+        val map = org.json.JSONObject()
+        activeSongByTrack.forEach { (track, song) -> map.put(track, song) }
+        editor.putString(KEY_ACTIVE_COLLECTION, key)
+            .putString(KEY_ACTIVE_QUEUE, activeQueueIds.joinToString(","))
+            .putString(KEY_ACTIVE_SONG_MAP, map.toString())
+            .apply()
+    }
+
+    private fun readActiveCollection() {
+        val key = savedPlayback.getString(KEY_ACTIVE_COLLECTION, null)?.takeIf(String::isNotBlank) ?: return
+        _activeCollection.value = key
+        activeQueueIds = savedPlayback.getString(KEY_ACTIVE_QUEUE, null)
+            ?.split(',')
+            ?.filter(String::isNotBlank)
+            ?.toSet()
+            .orEmpty()
+        activeSongByTrack = runCatching {
+            val raw = savedPlayback.getString(KEY_ACTIVE_SONG_MAP, null)?.takeIf(String::isNotBlank) ?: return@runCatching emptyMap()
+            val rows = org.json.JSONObject(raw)
+            rows.keys().asSequence().mapNotNull { track -> rows.optLong(track, 0L).takeIf { it > 0L }?.let { track to it } }.toMap()
+        }.getOrDefault(emptyMap())
+    }
+
     private fun restorePlaybackQueue() {
         _playOrigin.value = readPersistedOrigin()
         viewModelScope.launch {
@@ -2744,6 +2812,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     const val KEY_ORIGIN_KIND = "origin_kind"
     const val KEY_ORIGIN_ID = "origin_id"
     const val KEY_ORIGIN_TITLE = "origin_title"
+    const val KEY_RESUME_POINTS = "resume_points"
+    const val KEY_ACTIVE_COLLECTION = "active_collection"
+    const val KEY_ACTIVE_QUEUE = "active_queue_ids"
+    const val KEY_ACTIVE_SONG_MAP = "active_song_map"
         const val KEY_VIEW_MODE = "view_mode"
         const val KEY_SORT_MODE = "sort_mode"
         const val NOT_FOUND_RETRY_MS = 6 * 60 * 60_000L
