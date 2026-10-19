@@ -1,0 +1,37 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          APK="dist/Olbyine-X-${VER}-release.apk"
+          NOTES=".github/release-notes/${VER}.md"
+          if [ ! -f "$APK" ]; then
+            echo "missing $APK" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes --cleanup-tag=false
+          fi
+          if [ -f "$NOTES" ]; then
+            gh release create "$TAG" "$APK" --title "Olbyine-X ${VER}" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" "$APK" --title "Olbyine-X ${VER}" --generate-notes
+          fi
