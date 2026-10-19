@@ -65,6 +65,7 @@ internal fun AmllLyricsView(
     showRoman: Boolean = true,
     subScale: Float = .5f,
     doubleTapSeek: Boolean = true,
+    alignPosition: Float = .5f,
 ) {
     val latestLineTap = rememberUpdatedState(onLineTap)
     val latestTouching = rememberUpdatedState(onTouching)
@@ -78,8 +79,9 @@ internal fun AmllLyricsView(
     val foreground = MaterialTheme.colorScheme.onBackground
     val fontScale = LocalDensity.current.fontScale
     val reduceMotion = LocalReduceMotion.current
-    val styleJson = remember(fontSize, fontScale, fontWeight, fontPath, inactiveOpacity, foreground, reduceMotion, lineBlur, showTranslation, showRoman, subScale, doubleTapSeek) {
+    val styleJson = remember(fontSize, fontScale, fontWeight, fontPath, inactiveOpacity, foreground, reduceMotion, lineBlur, showTranslation, showRoman, subScale, doubleTapSeek, alignPosition) {
         JSONObject()
+            .put("alignPosition", alignPosition.coerceIn(.15f, .85f).toDouble())
             .put("reduceMotion", reduceMotion)
             .put("lineBlur", lineBlur)
             .put("showTranslation", showTranslation)

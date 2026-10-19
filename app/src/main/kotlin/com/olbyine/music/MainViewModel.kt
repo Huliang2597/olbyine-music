@@ -146,6 +146,7 @@ data class NeteaseUiState(
     val openPlaylist: com.olbyine.music.data.NeteasePlaylistSummary? = null,
     val songs: List<com.olbyine.music.data.NeteaseSong> = emptyList(),
     val songsLoading: Boolean = false,
+    val songsPartial: Boolean = false,
     val liked: Set<Long> = emptySet(),
     val localMatches: Map<Long, String> = emptyMap(),
     val login: NeteaseLoginUiState? = null,
@@ -187,6 +188,13 @@ data class MainUiState(
     val libraryLoaded: Boolean = false,
 )
 
+data class CollectionResumePoint(
+    val songId: Long,
+    val title: String,
+    val positionMs: Long,
+    val at: Long,
+)
+
 data class TrackSortKeys(val title: String, val artist: String, val album: String) {
     fun forMode(mode: LibrarySortMode): String = when (mode) {
         LibrarySortMode.ARTIST -> artist
@@ -217,6 +225,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val artworkPaletteRepository = ArtworkPaletteRepository()
     private val savedPlayback = application.getSharedPreferences("native_playback", Application.MODE_PRIVATE)
     private val libraryPreferences = application.getSharedPreferences("native_library_view", Application.MODE_PRIVATE)
+
+    private val _collectionResume = MutableStateFlow<Map<String, CollectionResumePoint>>(emptyMap())
+    val collectionResume: StateFlow<Map<String, CollectionResumePoint>> = _collectionResume
+    private val _activeCollection = MutableStateFlow<String?>(null)
+    val activeCollection: StateFlow<String?> = _activeCollection
+    private var activeQueueIds: Set<String> = emptySet()
+    private var activeSongByTrack: Map<String, Long> = emptyMap()
+    private var activeCollectionAt = 0L
+    private var resumeWriteAt = 0L
 
     private val destination = MutableStateFlow(AppDestination.LIBRARY)
     private var returnDestination = AppDestination.LIBRARY
@@ -340,6 +357,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         processAutomaticLyricsQueue()
         observeArtworkColors()
         viewModelScope.launch { playback.state.map { it.currentMediaId }.distinctUntilChanged().collect { app.lyricsHub.setCurrent(it) } }
+        viewModelScope.launch {
+            playback.state.collect { state ->
+                val key = _activeCollection.value ?: return@collect
+                val ids = activeQueueIds
+                if (ids.isNotEmpty() && state.queueIds.isNotEmpty() && ids.none { it in state.queueIds } &&
+                    System.currentTimeMillis() - activeCollectionAt > 2_500L
+                ) {
+                    _activeCollection.value = null
+                    activeQueueIds = emptySet()
+                    activeSongByTrack = emptyMap()
+                    return@collect
+                }
+                val mediaId = state.currentMediaId ?: return@collect
+                val songId = activeSongByTrack[mediaId] ?: return@collect
+                val previous = _collectionResume.value[key]
+                val changed = previous?.songId != songId
+                val now = System.currentTimeMillis()
+                if (!changed && now - resumeWriteAt < 3_000L) return@collect
+                resumeWriteAt = now
+                _collectionResume.value = _collectionResume.value + (key to CollectionResumePoint(
+                    songId = songId,
+                    title = state.currentTitle ?: previous?.title.orEmpty(),
+                    positionMs = state.positionMs.coerceAtLeast(0L),
+                    at = now,
+                ))
+            }
+        }
     }
 
     fun navigateTo(value: AppDestination) {
@@ -1710,28 +1754,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val neteaseClient: com.olbyine.music.data.NeteaseClient get() = app.netease
 
     fun openNeteasePlaylist(playlist: com.olbyine.music.data.NeteasePlaylistSummary) {
-        val songs: suspend () -> List<com.olbyine.music.data.NeteaseSong> = when (playlist.kind) {
-            com.olbyine.music.data.NeteaseCollectionKind.ALBUM -> { { netease.albumSongs(playlist.id) } }
-            com.olbyine.music.data.NeteaseCollectionKind.ARTIST -> { { netease.artistTopSongs(playlist.id) } }
-            com.olbyine.music.data.NeteaseCollectionKind.DAILY -> { { netease.dailySongs() } }
-            else -> { { netease.playlistSongs(playlist.id) } }
-        }
         val cached = playlist.kind == com.olbyine.music.data.NeteaseCollectionKind.PLAYLIST ||
             playlist.kind == com.olbyine.music.data.NeteaseCollectionKind.CHART
-        openNeteaseCollection(playlist, songs, cached)
+        openNeteaseCollection(playlist, cached)
     }
 
     fun openNeteaseCollection(
         playlist: com.olbyine.music.data.NeteasePlaylistSummary,
-        load: suspend () -> List<com.olbyine.music.data.NeteaseSong>,
         cached: Boolean = false,
     ) {
-        _netease.value = _netease.value.copy(openPlaylist = playlist, songs = emptyList(), songsLoading = true, message = null, localMatches = emptyMap())
+        _netease.value = _netease.value.copy(openPlaylist = playlist, songs = emptyList(), songsLoading = true, songsPartial = false, message = null, localMatches = emptyMap())
         neteaseJob?.cancel()
         neteaseJob = viewModelScope.launch {
-            suspend fun show(songs: List<com.olbyine.music.data.NeteaseSong>, loading: Boolean) {
+            suspend fun show(songs: List<com.olbyine.music.data.NeteaseSong>, loading: Boolean, partial: Boolean = false) {
                 if (_netease.value.openPlaylist?.id != playlist.id) return
-                _netease.value = _netease.value.copy(songs = songs, songsLoading = loading)
+                _netease.value = _netease.value.copy(songs = songs, songsLoading = loading, songsPartial = partial)
                 val matches = withContext(Dispatchers.Default) {
                     matchSongs(songs.map { RemoteSong(it.id.toString(), it.title, it.artists, it.album, it.durationMs, it.coverUrl) }, library.tracks.value)
                         .mapKeys { it.key.toLong() }
@@ -1741,8 +1778,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val saved = if (cached) netease.cachedSongs(playlist.id) else null
                 if (!saved.isNullOrEmpty()) show(saved, loading = false)
-                val songs = load()
-                if (saved != songs) show(songs, loading = false)
+                var best = saved.orEmpty()
+                netease.collectionStream(playlist).collect { batch ->
+                    if (!batch.complete && batch.songs.size < best.size) return@collect
+                    best = batch.songs
+                    show(batch.songs, loading = false, partial = batch.songs.size < playlist.trackCount)
+                }
+                if (_netease.value.openPlaylist?.id == playlist.id) _netease.value = _netease.value.copy(songsPartial = false)
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 _netease.value = _netease.value.copy(songsLoading = false, message = error.message ?: "读取歌单失败")
@@ -1799,7 +1841,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _netease.value = _netease.value.copy(openPlaylist = null, songs = emptyList(), songsLoading = false)
     }
 
-    fun playNeteaseSongs(songs: List<com.olbyine.music.data.NeteaseSong>, index: Int, shuffle: Boolean = false) {
+    fun playNeteaseSongs(
+        songs: List<com.olbyine.music.data.NeteaseSong>,
+        index: Int,
+        shuffle: Boolean = false,
+        source: String? = null,
+        startMs: Long = 0L,
+    ) {
         val state = _netease.value
         val online = settingsRepository.settings.value.neteaseOnline
         val local = library.tracks.value.associateBy(Track::id)
@@ -1817,8 +1865,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             queue.indexOfFirst { it.id == (state.localMatches[song.id] ?: com.olbyine.music.data.NeteaseSong.trackId(song.id)) }
         }?.takeIf { it >= 0 } ?: 0
         if (shuffle && !uiState.value.playback.shuffleEnabled) playback.toggleShuffle()
+        _activeCollection.value = source
+        activeQueueIds = if (source == null) emptySet() else queue.map(Track::id).toSet()
+        activeSongByTrack = if (source == null) emptyMap() else songs.mapNotNull { song ->
+            (state.localMatches[song.id] ?: com.olbyine.music.data.NeteaseSong.trackId(song.id)).let { it to song.id }
+        }.toMap()
+        activeCollectionAt = System.currentTimeMillis()
         playback.playQueue(queue, if (shuffle) queue.indices.random() else start)
+        if (startMs > 1_000L) viewModelScope.launch {
+            delay(700)
+            playback.seekTo(startMs)
+        }
         navigateTo(AppDestination.NOW_PLAYING)
+    }
+
+    fun resumeNeteaseCollection(key: String, songs: List<com.olbyine.music.data.NeteaseSong>) {
+        val point = _collectionResume.value[key] ?: return
+        if (songs.isEmpty()) return
+        val index = songs.indexOfFirst { it.id == point.songId }
+        if (index < 0) playNeteaseSongs(songs, 0, source = key)
+        else playNeteaseSongs(songs, index, source = key, startMs = point.positionMs)
     }
 
     fun toggleNeteaseLike(id: Long) {
@@ -2130,6 +2196,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setLyricFontSize(value: Float) = settingsRepository.setLyricFontSize(value)
     fun setLyricOpacity(value: Float) = settingsRepository.setLyricInactiveOpacity(value)
     fun setLyricOffset(value: Long) = settingsRepository.setLyricOffsetMs(value)
+
+    fun setLyricAlignPosition(value: Float) = settingsRepository.setLyricAlignPosition(value)
     fun setHapticsEnabled(value: Boolean) = settingsRepository.setHapticsEnabled(value)
     fun setStatusBarLyricsEnabled(value: Boolean) = settingsRepository.setStatusBarLyricsEnabled(value)
     fun setAutomaticLyricsEnabled(value: Boolean) = settingsRepository.setAutomaticLyricsEnabled(value)

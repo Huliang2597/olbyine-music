@@ -412,7 +412,7 @@ internal fun NeteaseCollectionScreen(
     onPush: (NcmRoute) -> Unit,
     onPlay: (List<NeteaseSong>, Int, Boolean) -> Unit,
 ) {
-    val (loaded, retry) = rememberLoad(target.id, target.kind) { client.collection(target) }
+    val (loaded, retry) = rememberLoadStream(target.id, target.kind) { client.collectionStream(target) }
     val data = loaded.value
     val summary = data?.summary ?: target
     val allSongs = data?.songs.orEmpty()
@@ -423,6 +423,11 @@ internal fun NeteaseCollectionScreen(
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = rememberCoroutineScope()
     var saved by remember(target.id) { mutableStateOf<Boolean?>(null) }
+    val resumeKey = collectionKey(summary.kind.name, summary.id)
+    val scopedPlay = LocalPlayNeteaseCollection.current
+    val play: (Int, Boolean) -> Unit = { index, shuffle ->
+        if (scopedPlay != null) scopedPlay(resumeKey, songs, index, shuffle, 0L) else onPlay(songs, index, shuffle)
+    }
     LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 32.dp)) {
         item(key = "head") {
             Box(Modifier.fillMaxWidth().clipToBounds()) {
@@ -501,8 +506,8 @@ internal fun NeteaseCollectionScreen(
                         )
                     }
                     Row(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        PillButton("播放全部", { if (songs.isNotEmpty()) onPlay(songs, 0, false) }, icon = Icons.Rounded.PlayArrow, enabled = songs.isNotEmpty(), height = 40.dp)
-                        PillButton("随机播放", { if (songs.isNotEmpty()) onPlay(songs, 0, true) }, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = songs.isNotEmpty(), height = 40.dp)
+                        PillButton("播放全部", { if (songs.isNotEmpty()) play(0, false) }, icon = Icons.Rounded.PlayArrow, enabled = songs.isNotEmpty(), height = 40.dp)
+                        PillButton("随机播放", { if (songs.isNotEmpty()) play(0, true) }, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = songs.isNotEmpty(), height = 40.dp)
                         Spacer(Modifier.weight(1f))
                         if (client.signedIn && (summary.kind == NeteaseCollectionKind.ALBUM || (summary.kind == NeteaseCollectionKind.PLAYLIST && !summary.own))) {
                             val on = saved == true
@@ -528,6 +533,11 @@ internal fun NeteaseCollectionScreen(
                         OlbyineSearchField(query, { query = it }, if (summary.kind == NeteaseCollectionKind.ALBUM) "在专辑中搜索" else "在歌单中搜索",
                             Modifier.fillMaxWidth().padding(horizontal = 10.dp).padding(bottom = 6.dp))
                     }
+                    val resumePoint = LocalCollectionResume.current?.invoke(resumeKey)
+                    val resumeCollection = LocalResumeCollection.current
+                    if (resumePoint != null && resumeCollection != null && LocalActiveCollection.current != resumeKey) {
+                        CollectionResumeRow(resumePoint, Modifier.padding(top = 8.dp)) { resumeCollection(resumeKey, allSongs) }
+                    }
                 }
             }
         }
@@ -538,8 +548,11 @@ internal fun NeteaseCollectionScreen(
         }
         itemsIndexed(songs, key = { index, it -> "$index:${it.id}" }) { index, song ->
             Box(itemMotion().padding(horizontal = 10.dp)) {
-                NeteaseSongRow(song, current = currentTrackId == NeteaseSong.trackId(song.id)) { onPlay(songs, index, false) }
+                NeteaseSongRow(song, current = currentTrackId == NeteaseSong.trackId(song.id)) { play(index, false) }
             }
+        }
+        if (data != null && !data.complete) item(key = "more") {
+            Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
         }
         item(key = "bottom") { Spacer(Modifier.navigationBarsPadding()) }
     }

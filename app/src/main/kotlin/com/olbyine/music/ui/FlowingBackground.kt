@@ -36,6 +36,8 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
+private const val BACKGROUND_WARP = false
+
 @Composable
 internal fun FlowingBackground(
     coverPath: String?,
@@ -87,6 +89,18 @@ internal fun FlowingBackground(
 }
 
 internal class AlbumTexture(val key: String, val bitmap: Bitmap, val warp: FloatArray, val raw: Bitmap) {
+    val average: FloatArray by lazy {
+        val one = Bitmap.createScaledBitmap(bitmap, 1, 1, true)
+        val pixel = one.getPixel(0, 0)
+        if (one !== bitmap) one.recycle()
+        floatArrayOf(
+            ((pixel shr 16) and 0xFF) / 255f,
+            ((pixel shr 8) and 0xFF) / 255f,
+            (pixel and 0xFF) / 255f,
+        )
+    }
+
+
     companion object {
         private val cache = android.util.LruCache<String, AlbumTexture>(6)
 
@@ -425,6 +439,9 @@ private class FlowingBackgroundView(context: Context) : View(context), Choreogra
                 material.setFloatUniform("resolution", w.toFloat(), h.toFloat())
                 material.setFloatUniform("time", flowSeconds)
                 material.setFloatUniform("scrim", .18f - .08f * pulse)
+                val average = texture.average
+                material.setFloatUniform("fallback", average[0], average[1], average[2])
+                material.setFloatUniform("warpAmount", if (BACKGROUND_WARP) 1f else 0f)
                 RenderEffect.createChainEffect(RenderEffect.createRuntimeShaderEffect(material, "content"), blur)
             } else blur
             node.setRenderEffect(effect)
@@ -506,6 +523,8 @@ uniform shader content;
 uniform float2 resolution;
 uniform float time;
 uniform float scrim;
+uniform float3 fallback;
+uniform float warpAmount;
 
 half3 saturate3(half3 c, half s) {
     half3 r = half3(0.2126 + 0.7873 * s, 0.2126 - 0.2126 * s, 0.2126 - 0.2126 * s);
@@ -519,13 +538,15 @@ half4 main(float2 p) {
     float phase = acos(sin(time * 3.14159265 / 5.0)) / 3.14159265;
     float breathe = phase * phase * (3.0 - 2.0 * phase);
     float2 centered = uv - float2(0.5);
-    float pinch = 0.06 * breathe * (1.0 - dot(centered, centered) * 2.0);
+    float pinch = 0.06 * breathe * (1.0 - dot(centered, centered) * 2.0) * warpAmount;
     float2 warped = float2(0.5) + centered * (1.0 - pinch);
-    warped += 0.012 * float2(sin(uv.y * 5.0 + time * 0.31), cos(uv.x * 4.0 - time * 0.27));
+    warped += 0.012 * warpAmount * float2(sin(uv.y * 5.0 + time * 0.31), cos(uv.x * 4.0 - time * 0.27));
     half3 c = content.eval(warped * resolution).rgb;
     c = saturate3(c, 1.4);
     c = clamp(c, half3(-0.752941), half3(1.25098));
     c = saturate3(c, 0.7);
+    float lum = dot(c, half3(0.299, 0.587, 0.114));
+    c = mix(half3(fallback), c, smoothstep(0.0, 0.06, lum));
     c = mix(c, half3(0.0), half(scrim));
     float noise = fract(52.9829189 * fract(dot(p, float2(0.06711056, 0.00583715)))) - 0.5;
     c += half3(noise / 255.0);

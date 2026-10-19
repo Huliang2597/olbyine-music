@@ -378,6 +378,11 @@ private fun NeteasePlaylistPage(
     val songs = remember(allSongs, query) { filterSongs(allSongs, query) }
     val localCount = remember(allSongs, state.localMatches) { allSongs.count { it.id in state.localMatches } }
     val haptics = rememberHaptics()
+    val resumeKey = collectionKey(playlist.kind.name, playlist.id)
+    val scopedPlay = LocalPlayNeteaseCollection.current
+    val play: (Int, Boolean) -> Unit = { index, shuffle ->
+        if (scopedPlay != null) scopedPlay(resumeKey, songs, index, shuffle, 0L) else onPlay(songs, index, shuffle)
+    }
     androidx.compose.foundation.lazy.LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = bottomContentPadding + 24.dp),
@@ -412,8 +417,8 @@ private fun NeteasePlaylistPage(
                 }
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PillButton("播放", { haptics.click(HapticArea.PLAYBACK); onPlay(songs, 0, false) }, icon = Icons.Rounded.PlayArrow, enabled = songs.isNotEmpty())
-                    PillButton("随机", { haptics.click(HapticArea.PLAYBACK); onPlay(songs, 0, true) }, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = songs.isNotEmpty())
+                    PillButton("播放", { haptics.click(HapticArea.PLAYBACK); play(0, false) }, icon = Icons.Rounded.PlayArrow, enabled = songs.isNotEmpty())
+                    PillButton("随机", { haptics.click(HapticArea.PLAYBACK); play(0, true) }, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = songs.isNotEmpty())
                     Spacer(Modifier.weight(1f))
                     GhostIconButton(Icons.Rounded.LibraryAdd, "存为本地歌单", onSaveLocal, enabled = localCount > 0)
                 }
@@ -428,6 +433,15 @@ private fun NeteasePlaylistPage(
                 if (allSongs.size > 8) {
                     Spacer(Modifier.height(12.dp))
                     OlbyineSearchField(query, { query = it }, if (playlist.liked) "在我喜欢的音乐中搜索" else "在歌单中搜索", Modifier.fillMaxWidth())
+                }
+                val resumePoint = LocalCollectionResume.current?.invoke(resumeKey)
+                val resumeCollection = LocalResumeCollection.current
+                if (resumePoint != null && resumeCollection != null && LocalActiveCollection.current != resumeKey) {
+                    Spacer(Modifier.height(10.dp))
+                    CollectionResumeRow(resumePoint) {
+                        haptics.click(HapticArea.PLAYBACK)
+                        resumeCollection(resumeKey, allSongs)
+                    }
                 }
                 Spacer(Modifier.height(10.dp))
             }
@@ -452,7 +466,7 @@ private fun NeteasePlaylistPage(
             Row(
                 itemMotion().fillMaxWidth().clip(RoundedCornerShape(16.dp))
                     .background(highlight)
-                    .clickable(enabled = playable) { haptics.click(HapticArea.PLAYBACK); onPlay(songs, index, false) }
+                    .clickable(enabled = playable) { haptics.click(HapticArea.PLAYBACK); play(index, false) }
                     .padding(start = 6.dp, top = 6.dp, bottom = 6.dp)
                     .graphicsLayer { alpha = dim },
                 verticalAlignment = Alignment.CenterVertically,
@@ -508,6 +522,9 @@ private fun NeteasePlaylistPage(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 val liked = song.id in state.liked
+                val openArtist = LocalOpenArtist.current
+                val openLink = LocalNeteaseLinks.current
+                val artistName = song.artists.firstOrNull().orEmpty()
                 HeartWithMenu(
                     track = { song.toTrack() },
                     liked = liked,
@@ -516,8 +533,15 @@ private fun NeteasePlaylistPage(
                     idleColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     iconSize = 20.dp,
                     minSize = 40.dp,
+                    onOpenArtist = if (openArtist != null) ({ openArtist(song.artistIds.firstOrNull(), artistName) }) else null,
+                    onOpenAlbum = if (openLink != null && song.albumId > 0) ({
+                        openLink(com.olbyine.music.data.NeteaseTarget.Album(song.albumId))
+                    }) else null,
                 )
             }
+        }
+        if (state.songsPartial) item(key = "more") {
+            Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
         }
     }
 }

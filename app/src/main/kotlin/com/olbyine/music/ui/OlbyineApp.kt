@@ -263,6 +263,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val appleSettings by viewModel.appleMusicSettings.collectAsState()
     val usbDriver by viewModel.usbDriverState.collectAsState()
     val neteaseState by viewModel.neteaseState.collectAsState()
+    val collectionResume by viewModel.collectionResume.collectAsState()
+    val activeCollection by viewModel.activeCollection.collectAsState()
     val albums by viewModel.albums.collectAsState()
     val importProgress by viewModel.importProgress.collectAsState()
     val albumRequest by viewModel.albumRequest.collectAsState()
@@ -680,6 +682,12 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             },
                             LocalSearchSoundCloud provides searchSoundCloud,
                             LocalNcmPush provides pushNcm,
+                            LocalCollectionResume provides { key -> collectionResume[key] },
+                            LocalResumeCollection provides { key, songs -> runPlaybackAction { viewModel.resumeNeteaseCollection(key, songs) } },
+                            LocalPlayNeteaseCollection provides { key, songs, index, shuffle, startMs ->
+                                runPlaybackAction { viewModel.playNeteaseSongs(songs, index, shuffle, key, startMs) }
+                            },
+                            LocalActiveCollection provides activeCollection,
                         ) {
                             AnimatedContent(
                                 targetState = streamingProvider,
@@ -826,6 +834,12 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 LocalNeteaseComments provides openComments,
                 LocalNeteaseChat provides openChat,
                 LocalOpenArtist provides openArtist,
+                LocalCollectionResume provides { key -> collectionResume[key] },
+                LocalResumeCollection provides { key, songs -> runPlaybackAction { viewModel.resumeNeteaseCollection(key, songs) } },
+                LocalPlayNeteaseCollection provides { key, songs, index, shuffle, startMs ->
+                    runPlaybackAction { viewModel.playNeteaseSongs(songs, index, shuffle, key, startMs) }
+                },
+                LocalActiveCollection provides activeCollection,
             ) {
                 NeteaseOverlayHost(
                     stack = ncmStack,
@@ -1056,6 +1070,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                 fontPath = state.settings.lyricFontPath,
                                 inactiveOpacity = state.settings.lyricInactiveOpacity,
                                 offsetMs = state.settings.lyricOffsetMs,
+                                alignPosition = state.settings.lyricAlignPosition,
                                 onBack = { setPage(0) },
                                 onSeek = { position ->
                                     haptics.click(com.olbyine.music.data.HapticArea.LYRICS)

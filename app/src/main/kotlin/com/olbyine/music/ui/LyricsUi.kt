@@ -126,6 +126,7 @@ internal fun LyricsPage(
     doubleTapSeek: Boolean = true,
     mvStyle: MvStyle? = null,
     onMvStyle: ((MvStyle?) -> Unit)? = null,
+    alignPosition: Float = .5f,
 ) {
     var mvMenu by remember { mutableStateOf(false) }
     val listening = externalStatus != null
@@ -259,6 +260,7 @@ internal fun LyricsPage(
                 showRoman = showRoman,
                 subScale = subScale,
                 doubleTapSeek = doubleTapSeek,
+                alignPosition = alignPosition,
             )
         }
 

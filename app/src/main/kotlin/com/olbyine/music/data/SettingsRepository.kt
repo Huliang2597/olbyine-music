@@ -24,6 +24,10 @@ class SettingsRepository(context: Context) {
         it.copy(lyricOffsetMs = value.coerceIn(-5_000L, 5_000L))
     }
 
+    fun setLyricAlignPosition(value: Float) = update {
+        it.copy(lyricAlignPosition = value.coerceIn(0.15f, 0.85f))
+    }
+
     fun setHapticsEnabled(value: Boolean) = update { it.copy(hapticsEnabled = value) }
 
     fun setStatusBarLyricsEnabled(value: Boolean) = update { it.copy(statusBarLyricsEnabled = value) }
@@ -140,6 +144,7 @@ class SettingsRepository(context: Context) {
             .putFloat(KEY_LYRIC_SIZE, next.lyricFontSize)
             .putFloat(KEY_LYRIC_OPACITY, next.lyricInactiveOpacity)
             .putLong(KEY_LYRIC_OFFSET, next.lyricOffsetMs)
+            .putFloat(KEY_LYRIC_ALIGN, next.lyricAlignPosition)
             .putBoolean(KEY_HAPTICS, next.hapticsEnabled)
             .putBoolean(KEY_STATUS_BAR_LYRICS, next.statusBarLyricsEnabled)
             .putBoolean(KEY_AUTOMATIC_LYRICS, next.automaticLyricsEnabled)
@@ -217,6 +222,7 @@ class SettingsRepository(context: Context) {
             lyricFontSize = preferences.getFloat(KEY_LYRIC_SIZE, 30f),
             lyricInactiveOpacity = preferences.getFloat(KEY_LYRIC_OPACITY, 0.38f),
             lyricOffsetMs = preferences.getLong(KEY_LYRIC_OFFSET, 0L),
+            lyricAlignPosition = preferences.getFloat(KEY_LYRIC_ALIGN, .5f).coerceIn(.15f, .85f),
             hapticsEnabled = preferences.getBoolean(KEY_HAPTICS, true),
             statusBarLyricsEnabled = preferences.getBoolean(KEY_STATUS_BAR_LYRICS, false),
             automaticLyricsEnabled = preferences.getBoolean(KEY_AUTOMATIC_LYRICS, false),
@@ -317,6 +323,7 @@ class SettingsRepository(context: Context) {
         const val KEY_LYRIC_SIZE = "lyric_size"
         const val KEY_LYRIC_OPACITY = "lyric_opacity"
         const val KEY_LYRIC_OFFSET = "lyric_offset"
+    const val KEY_LYRIC_ALIGN = "lyric_align"
         const val KEY_HAPTICS = "haptics"
         const val KEY_STATUS_BAR_LYRICS = "status_bar_lyrics"
         const val KEY_AUTOMATIC_LYRICS = "automatic_lyrics"

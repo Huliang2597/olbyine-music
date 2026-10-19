@@ -1105,7 +1105,18 @@ private fun TrackTitleRow(track: Track, onFavorite: (() -> Unit)?) {
                     showQueueActions = false,
                 )
             } else {
-                FavoriteButton(track.favorite, onFavorite, tint = MaterialTheme.colorScheme.onBackground, count = count)
+                HeartWithMenu(
+                    track = { track },
+                    liked = track.favorite,
+                    onToggle = onFavorite,
+                    count = count,
+                    likedColor = MaterialTheme.colorScheme.primary,
+                    idleColor = MaterialTheme.colorScheme.onBackground.copy(alpha = .72f),
+                    textColor = MaterialTheme.colorScheme.onBackground.copy(alpha = .72f),
+                    iconSize = 26.dp,
+                    minSize = 46.dp,
+                    showQueueActions = false,
+                )
             }
         }
     }
