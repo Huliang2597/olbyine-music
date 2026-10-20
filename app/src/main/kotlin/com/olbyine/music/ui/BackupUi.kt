@@ -93,7 +93,7 @@ internal fun BackupPage(viewModel: MainViewModel) {
     }
     SettingsGroup("导出与恢复") {
         LinkRow(Icons.Rounded.FileDownload, "导出为 JSON 文件", "把配置、登录信息、下载记录等保存到手机任意位置") {
-            exportLauncher.launch("olbyine-x-backup.json")
+            exportLauncher.launch("olbyine-backup.json")
         }
         GroupDivider()
         LinkRow(Icons.Rounded.Restore, "从 JSON 文件恢复", "选择之前导出的备份文件，覆盖当前数据") {

@@ -160,7 +160,7 @@ class BackupRepository(private val context: Context) {
     }
 
     companion object {
-        const val FILE_NAME = "olbyine-x-backup.json"
+        const val FILE_NAME = "olbyine-backup.json"
         private const val VERSION = 2
         private const val SEPARATOR = "\u0001"
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
