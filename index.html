@@ -340,15 +340,6 @@ section { scroll-margin-top: 92px; }
 .credit small { font-size: 12px; color: var(--md-on-surface-variant); }
 
 /* ============================================================
-   FAB
-   ============================================================ */
-.fab { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); z-index: 50; display: inline-flex; align-items: center; gap: 10px; height: 56px; max-width: calc(100vw - 32px); padding: 0 20px; border-radius: var(--shape-m); white-space: nowrap; background: var(--md-primary-container); color: var(--md-on-primary-container); text-decoration: none; font-weight: 600; box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--md-primary) 55%, transparent); transform: translateY(24px) scale(0.9); opacity: 0; pointer-events: none; transition: transform 320ms var(--ease-spring), opacity 220ms var(--ease-standard), border-radius 320ms var(--ease-spring); }
-.fab.show { transform: none; opacity: 1; pointer-events: auto; }
-.fab:hover { border-radius: var(--shape-l); }
-.fab svg { width: 20px; height: 20px; flex: none; }
-.fab__label--short { display: none; }
-
-/* ============================================================
    Footer
    ============================================================ */
 footer { margin-top: 96px; padding-block: 28px 44px; background: var(--md-surface-container-low); }
@@ -372,10 +363,6 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
 }
 @media (max-width: 700px) {
   :root { --page: min(1180px, 100% - 28px); }
-  .fab { height: 48px; padding: 0 14px; gap: 7px; font-size: 14px; border-radius: 14px; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
-  .fab svg { width: 18px; height: 18px; }
-  .fab__label--full { display: none; }
-  .fab__label--short { display: inline; }
   .nav-chips { display: none; }
   .grid--3, .grid--6 { grid-template-columns: 1fr; }
   .grid--6 .card:last-child { grid-column: auto; }
@@ -385,10 +372,6 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
   .seg__btn { padding: 12px 14px; font-size: 13.5px; }
   .strip { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 14px; }
 }
-@media (max-width: 380px) {
-  .fab { font-size: 13.5px; padding: 0 14px; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   [data-reveal] { opacity: 1; transform: none; }
@@ -647,11 +630,6 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
 
 </main>
 
-<a class="fab" id="fab" href="https://github.com/Huliang2597/olbyine-music/releases/tag/v1.1" aria-label="下载 Olbyine 1.1">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
-  <span class="fab__label fab__label--full">下载 1.1</span>
-  <span class="fab__label fab__label--short" aria-hidden="true">下载</span>
-</a>
 
 <footer>
   <div class="wrap">
@@ -723,95 +701,6 @@ const ICONS = {"ios":{"PREV":{"s":56,"p":[["M 25.1218 44.5009 C 26.7084 44.5009 
     if (reduce) { el.classList.add("in"); el.querySelectorAll("[data-count]").forEach(countUp); return; }
     io.observe(el);
   });
-
-  /* FAB visibility: hide while the install CTA is on screen */
-  const fab = document.getElementById("fab");
-  const install = document.getElementById("install");
-  addEventListener("scroll", () => {
-    const y = scrollY;
-    const installTop = install.offsetTop - innerHeight * 0.8;
-    fab.classList.toggle("show", y > 420 && y < installTop);
-  }, { passive: true });
-
-  /* Lyric demo */
-  const LINES = [
-    ["晚风吹过街口", "The evening wind turns the corner", 3.4],
-    ["灯一盏一盏亮起", "The lights come on one by one", 3.6],
-    ["我把今天哼成歌", "I hum today into a song", 3.3],
-    ["每个字都落在拍上", "Every word lands on the beat", 3.8],
-    ["你听见了吗", "Can you hear it", 2.8],
-    ["这一句刚好唱给你", "This line is sung just for you", 4.2],
-  ];
-  const track = document.getElementById("track");
-  const bar = document.getElementById("bar");
-  const tNow = document.getElementById("t-now");
-  const tAll = document.getElementById("t-all");
-  const starts = [];
-  let total = 0;
-  const rows = LINES.map(([main, sub, dur]) => {
-    starts.push(total);
-    total += dur;
-    const row = document.createElement("div");
-    row.className = "lyric";
-    const m = document.createElement("span");
-    m.className = "main";
-    m.textContent = main;
-    const sb = document.createElement("span");
-    sb.className = "sub";
-    sb.textContent = sub;
-    row.append(m, sb);
-    track.append(row);
-    return { row, main: m, dur };
-  });
-  const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
-  tAll.textContent = fmt(total);
-  let current = -1;
-  const lyricsBox = track.parentElement;
-  const focus = (i) => {
-    if (i === current) return;
-    current = i;
-    rows.forEach((r, k) => r.row.classList.toggle("on", k === i));
-    const y = lyricsBox.clientHeight * 0.3 - rows[Math.max(i, 0)].row.offsetTop;
-    track.style.transform = `translate3d(0, ${y.toFixed(1)}px, 0)`;
-  };
-  const render = (t) => {
-    let i = rows.length - 1;
-    while (i > 0 && t < starts[i]) i--;
-    focus(i);
-    rows.forEach((r, k) => {
-      const p = k < i ? 1 : k > i ? 0 : Math.min(1, Math.max(0, (t - starts[k]) / (r.dur * 0.86)));
-      r.main.style.setProperty("--p", p.toFixed(4));
-    });
-    bar.style.transform = `scaleX(${Math.min(1, t / total).toFixed(4)})`;
-    tNow.textContent = fmt(Math.min(t, total));
-  };
-  if (reduce) {
-    render(starts[3] + rows[3].dur * 0.5);
-  } else {
-    let origin = null, running = false, paused = 0, raf = 0;
-    const frame = (now) => {
-      if (origin === null) origin = now - paused * 1000;
-      let t = (now - origin) / 1000;
-      if (t > total + 1.4) {
-        origin = now;
-        t = 0;
-        track.style.transition = "none";
-        current = -1;
-        render(0);
-        track.offsetHeight;
-        track.style.transition = "";
-      } else render(t);
-      raf = requestAnimationFrame(frame);
-    };
-    const start = () => { if (!running) { running = true; origin = null; raf = requestAnimationFrame(frame); } };
-    const stop = () => { if (running) { running = false; cancelAnimationFrame(raf); if (origin !== null) paused = (performance.now() - origin) / 1000; } };
-    let visible = true;
-    const sync = () => (visible && !document.hidden ? start() : stop());
-    new IntersectionObserver(([e]) => { visible = e.isIntersecting; sync(); }).observe(document.querySelector(".phone"));
-    document.addEventListener("visibilitychange", sync);
-    render(0);
-    sync();
-  }
 
   /* Style switcher */
   const STYLES = {
