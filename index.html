@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Olbyine · 一个播放器，听所有的歌</title>
 <meta name="description" content="Olbyine：支持本地音乐、网易云音乐、洛雪音乐、SoundCloud、Navidrome 与 WebDAV 的 Android 播放器，逐字歌词、作曲人分类、四种界面风格。">
+<meta name="theme-color" content="#fef7ff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141218" media="(prefers-color-scheme: dark)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,300..800&family=Noto+Sans+SC:wght@300;400;500;700;900&family=Roboto+Mono:wght@400;500&display=swap">
@@ -94,7 +96,7 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scroll-padding-top: 16px; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overflow-x: clip; }
 body {
   margin: 0;
   background: var(--md-surface);
@@ -103,9 +105,10 @@ body {
   font-size: 16px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
-a { color: inherit; }
+a { color: inherit; -webkit-tap-highlight-color: transparent; }
+button { -webkit-tap-highlight-color: transparent; }
 img, svg { display: block; }
 :focus-visible { outline: 3px solid var(--md-primary); outline-offset: 3px; border-radius: var(--shape-xs); }
 
@@ -161,6 +164,9 @@ section { scroll-margin-top: 92px; }
 .nav-chips a:hover { background: var(--md-surface-container-high); color: var(--md-on-surface); }
 .icon-btn { display: grid; place-items: center; width: 44px; height: 44px; border-radius: var(--shape-full); color: var(--md-on-surface-variant); text-decoration: none; }
 .icon-btn svg { width: 22px; height: 22px; }
+
+/* Mobile section tabs */
+.mobile-tabs { display: none; }
 
 /* ============================================================
    Buttons
@@ -363,7 +369,64 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
 }
 @media (max-width: 700px) {
   :root { --page: min(1180px, 100% - 28px); }
+  body { font-size: 15.5px; line-height: 1.6; }
   .nav-chips { display: none; }
+  .top-bar__inner { height: 60px; gap: 10px; }
+  .brand { font-size: 16px; }
+  .brand svg { width: 28px; height: 28px; }
+
+  .mobile-tabs {
+    display: flex; gap: 8px; overflow-x: auto; overscroll-behavior-x: contain;
+    position: sticky; top: 60px; z-index: 39;
+    padding: 6px 14px 10px;
+    background: color-mix(in srgb, var(--md-surface) 94%, transparent);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .mobile-tabs::-webkit-scrollbar { display: none; }
+  .mobile-tabs a {
+    flex: none; display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: var(--shape-full);
+    background: var(--md-surface-container); color: var(--md-on-surface-variant);
+    font-size: 13.5px; font-weight: 500; text-decoration: none; white-space: nowrap;
+    transition: background-color 200ms var(--ease-standard), color 200ms var(--ease-standard);
+  }
+  .mobile-tabs a.active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+
+  .display-large { font-size: clamp(34px, 10.4vw, 46px); line-height: 1.2; }
+  .headline-large { font-size: 26px; }
+  .hero { gap: 26px; padding-block: 30px 36px; }
+  .hero h1 { margin-top: 22px; }
+  .hero .lead { font-size: 15.5px; margin-top: 14px; }
+  .hero__art { min-height: 0; padding-block: 4px 6px; align-self: start; }
+  .phone { width: min(272px, 80vw); }
+  .blob { filter: blur(32px); opacity: 0.6; }
+  .hero__actions { gap: 10px; margin-top: 22px; }
+  .hero__actions .btn { flex: 1 1 100%; justify-content: center; height: 50px; }
+  .hero__meta { margin-top: 18px; gap: 6px; }
+  .chip { height: 32px; padding: 0 12px; font-size: 13px; }
+
+  .stats { gap: 8px; }
+  .stat { padding: 16px 16px 14px; border-radius: 20px; }
+  .stat b { font-size: 26px; }
+  .stat span { font-size: 12.5px; }
+
+  .section { padding-top: 56px; }
+  section { scroll-margin-top: 118px; }
+  .section__head { margin-bottom: 18px; }
+  .section .intro { font-size: 15px; }
+  .grid { gap: 10px; }
+  .card { padding: 20px; border-radius: 22px; }
+  .card h3 { margin-top: 12px; font-size: 17px; }
+  .card p { font-size: 14px; }
+
+  .steps li { padding: 16px; }
+  .notes { font-size: 14px; }
+  .hash { padding: 12px 14px; }
+  .hash code { word-break: break-all; }
+
+  .credit { padding: 8px 13px; font-size: 13px; }
+
+  footer { margin-top: 64px; padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
   .grid--3, .grid--6 { grid-template-columns: 1fr; }
   .grid--6 .card:last-child { grid-column: auto; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -401,6 +464,16 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
     </a>
   </div>
 </header>
+
+<nav class="mobile-tabs" id="mobileTabs" aria-label="页面导航">
+  <a href="#sources">音乐来源</a>
+  <a href="#library">音乐库</a>
+  <a href="#lyrics">歌词</a>
+  <a href="#styles">界面风格</a>
+  <a href="#sound">声音</a>
+  <a href="#install">安装</a>
+  <a href="#credits">致谢</a>
+</nav>
 
 <main id="main">
 
@@ -820,6 +893,23 @@ const ICONS = {"ios":{"PREV":{"s":56,"p":[["M 25.1218 44.5009 C 26.7084 44.5009 
   };
   fill("loop-a", CREDITS.slice(0, 15));
   fill("loop-b", CREDITS.slice(15));
+
+  /* Mobile tabs scrollspy */
+  const tabs = [...document.querySelectorAll("#mobileTabs a")];
+  if (tabs.length) {
+    const targets = tabs.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+    const spy = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        const id = "#" + e.target.id;
+        tabs.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === id));
+        const active = tabs.find((a) => a.classList.contains("active"));
+        const bar = document.getElementById("mobileTabs");
+        if (active && bar) bar.scrollTo({ left: active.offsetLeft - bar.clientWidth / 2 + active.offsetWidth / 2, behavior: "smooth" });
+      });
+    }, { rootMargin: "-45% 0px -50% 0px", threshold: 0 });
+    targets.forEach((el) => spy.observe(el));
+  }
 
   /* Copy */
   document.querySelectorAll(".copy").forEach((btn) => {
