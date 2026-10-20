@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -276,6 +277,7 @@ internal fun HeartWithMenu(
     showQueueActions: Boolean = true,
     onOpenArtist: (() -> Unit)? = null,
     onOpenAlbum: (() -> Unit)? = null,
+    onDownload: (() -> Unit)? = null,
 ) {
     val actions = LocalTrackActions.current
     var open by remember { mutableStateOf(false) }
@@ -295,6 +297,7 @@ internal fun HeartWithMenu(
                 GlassMenuItem("收藏到歌单", { open = false; track()?.let(actions.addToPlaylist) }, icon = Icons.AutoMirrored.Rounded.PlaylistAdd)
                 GlassMenuItem("下一首播放", { open = false; track()?.let(actions.playNext) }, icon = Icons.AutoMirrored.Rounded.PlaylistPlay)
                 GlassMenuItem("加入播放列表", { open = false; track()?.let(actions.enqueue) }, icon = Icons.AutoMirrored.Rounded.QueueMusic)
+                if (onDownload != null) GlassMenuItem("下载", { open = false; onDownload() }, icon = Icons.Rounded.FileDownload)
                 if (onOpenArtist != null) GlassMenuItem("打开歌手页", { open = false; onOpenArtist() }, icon = Icons.Rounded.Mic)
                 if (onOpenAlbum != null) GlassMenuItem("打开专辑页", { open = false; onOpenAlbum() }, icon = Icons.Rounded.Album)
             }

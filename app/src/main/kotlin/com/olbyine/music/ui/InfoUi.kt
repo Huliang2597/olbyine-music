@@ -12,6 +12,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -34,6 +36,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Refresh
@@ -79,6 +82,7 @@ import com.olbyine.music.data.MetadataSource
 import com.olbyine.music.data.Track
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun ArtistAlbumPage(
     track: Track,
     revision: Int,
@@ -89,6 +93,10 @@ internal fun ArtistAlbumPage(
     onSaveAlbum: (title: String, artist: String, description: String, releaseDate: String, image: Uri?) -> Unit,
     onMatch: () -> Unit,
     onArtistHome: (() -> Unit)? = null,
+    localComposerCount: Int = 0,
+    localAlbumCount: Int = 0,
+    onLocalComposer: (() -> Unit)? = null,
+    onLocalAlbum: (() -> Unit)? = null,
     onAppear: () -> Unit = {},
     wiki: (@Composable () -> Unit)? = null,
 ) {
@@ -140,6 +148,15 @@ internal fun ArtistAlbumPage(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        (track.composerCredit?.takeIf(String::isNotBlank) ?: track.composer)?.trim()?.takeIf(String::isNotEmpty)?.let { composer ->
+            Text(
+                "作曲：$composer",
+                Modifier.padding(top = 6.dp).rise(progress, 2),
+                style = MaterialTheme.typography.bodySmall,
+                color = ink.copy(alpha = .62f),
+                textAlign = TextAlign.Center,
+            )
+        }
         artist?.source?.let { source ->
             Text(
                 "资料来源：${source.label}",
@@ -155,8 +172,15 @@ internal fun ArtistAlbumPage(
                 collapsedLines = 6,
                 muted = artist?.bio.isNullOrBlank(),
             )
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                Modifier.fillMaxWidth().padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 if (onArtistHome != null) SmallChip("歌手主页", Icons.Rounded.Person, onClick = onArtistHome)
+                if (onLocalComposer != null && localComposerCount > 0) {
+                    SmallChip("作曲人的本地歌曲 · $localComposerCount", Icons.Rounded.EditNote, onClick = onLocalComposer)
+                }
                 SmallChip("编辑", Icons.Rounded.Edit) { editArtist = true }
                 SmallChip("匹配资料", Icons.Rounded.Search, onClick = onMatch)
             }
@@ -214,7 +238,14 @@ internal fun ArtistAlbumPage(
                 collapsedLines = 5,
                 muted = album?.description.isNullOrBlank(),
             )
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                Modifier.fillMaxWidth().padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (onLocalAlbum != null && localAlbumCount > 0) {
+                    SmallChip("专辑的本地歌曲 · $localAlbumCount", Icons.Rounded.Album, onClick = onLocalAlbum)
+                }
                 SmallChip("编辑", Icons.Rounded.Edit) { editAlbum = true }
                 SmallChip("匹配封面与信息", Icons.Rounded.Refresh, onClick = onMatch)
             }

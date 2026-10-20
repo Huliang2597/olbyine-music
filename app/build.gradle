@@ -9,7 +9,7 @@ android {
     compileSdk 36
 
     defaultConfig {
-        applicationId 'com.olbyinex.music'
+        applicationId 'com.olbyine.music'
         minSdk 29
         targetSdk 36
         versionCode 120

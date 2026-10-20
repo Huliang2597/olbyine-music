@@ -83,6 +83,10 @@ import androidx.compose.material.icons.rounded.FontDownload
 import androidx.compose.material.icons.rounded.Gavel
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Backup
+import androidx.compose.material.icons.rounded.FileDownload
+import androidx.compose.material.icons.rounded.FileDownloadDone
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
@@ -188,6 +192,8 @@ private enum class SettingsPage(val title: String, val subtitle: String, val ico
     EQUALIZER("均衡器", "10 段均衡、预设、声道平衡", Icons.Rounded.Equalizer),
     LIBRARY("曲库与导入", "过滤视频和短音频、去重、自动补全信息", Icons.Rounded.LibraryMusic),
     ONLINE("在线服务", "网易云账号、Apple Music、WebDAV、监听其他播放器", Icons.Rounded.Cloud),
+    DOWNLOADS("下载管理", "已下载的歌曲、占用空间与删除", Icons.Rounded.FileDownloadDone),
+    BACKUP("备份与恢复", "把配置和登录信息导出，或备份到 WebDAV", Icons.Rounded.Backup),
     HAPTICS("触感反馈", "选择哪些操作带震动", Icons.Rounded.Vibration),
     ABOUT("关于", "版本与开源许可", Icons.Rounded.Info),
 }
@@ -196,7 +202,8 @@ private val SettingsSections = listOf(
     "界面" to listOf(SettingsPage.APPEARANCE, SettingsPage.PLAYER, SettingsPage.HAPTICS),
     "歌词" to listOf(SettingsPage.LYRICS, SettingsPage.LYRIC_OUTPUT),
     "声音" to listOf(SettingsPage.AUDIO, SettingsPage.EQUALIZER, SettingsPage.TRANSITION),
-    "音乐" to listOf(SettingsPage.LIBRARY, SettingsPage.ONLINE),
+    "音乐" to listOf(SettingsPage.LIBRARY, SettingsPage.ONLINE, SettingsPage.DOWNLOADS),
+    "备份" to listOf(SettingsPage.BACKUP),
     "" to listOf(SettingsPage.ABOUT),
 )
 
@@ -250,6 +257,8 @@ internal fun SettingsScreen(
                     SettingsPage.LIBRARY -> LibrarySettingsPage(state, viewModel)
                     SettingsPage.ONLINE -> OnlineSettingsPage(state, viewModel, onExternalLyrics, onNeteaseLogin)
                     SettingsPage.HAPTICS -> HapticsPage(state, viewModel)
+                    SettingsPage.DOWNLOADS -> DownloadManagerPage(viewModel)
+                    SettingsPage.BACKUP -> BackupPage(viewModel)
                     SettingsPage.ABOUT -> AboutPage(state, viewModel)
                 }
             }
@@ -269,7 +278,7 @@ private fun SettingsHome(state: MainUiState, bottomContentPadding: Dp, scroll: a
                 .verticalScroll(scroll)
                 .padding(bottom = bottomContentPadding + 28.dp),
         ) {
-            ScreenHeader("设置", "Olbyine-X ${BuildConfig.VERSION_NAME}")
+            ScreenHeader("设置", "Olbyine ${BuildConfig.VERSION_NAME}")
             StyleCard(state) { onOpen(SettingsPage.APPEARANCE) }
             val compact = LocalStyleSpec.current.style == UiStyle.IOS
             SettingsSections.forEach { (title, pages) ->
@@ -821,6 +830,112 @@ private fun OnlineSettingsPage(state: MainUiState, viewModel: MainViewModel, onE
             )
         }
     }
+    SettingsGroup("洛雪音乐") {
+        ChoiceRow(
+            Icons.Rounded.HighQuality,
+            "播放音质",
+            "高于曲目可用码率时会自动降级；无损与 Hi-Res 需要自定义源支持，内置直链最高 320k",
+            com.olbyine.music.data.KuwoClient.QUALITIES,
+            settings.kuwoQuality,
+            viewModel::setKuwoQuality,
+        )
+        GroupDivider()
+        LxCustomSourceSection { viewModel.showMessage(it) }
+        GroupDivider()
+        Text(
+            "内置搜索、榜单与歌单走酷我接口；导入洛雪自定义源后，播放地址会优先交给脚本获取，" +
+                "脚本失败才回退到内置直链。选无损 / Hi-Res 时只有脚本声明了对应档位才会真的取到 flac。",
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    SettingsGroup("下载") {
+        ChoiceRow(
+            Icons.Rounded.FileDownload,
+            "默认下载音质",
+            "点下载时会在选择框里预先选中这一项，仍可临时改",
+            NeteaseClient.QUALITIES,
+            settings.neteaseDownloadQuality,
+            viewModel::setNeteaseDownloadQuality,
+        )
+        GroupDivider()
+        SettingSwitch(
+            Icons.Rounded.Lyrics,
+            "同时保存歌词",
+            "下载时把 .lrc 歌词放在同一目录（有翻译时一并写入）",
+            settings.neteaseDownloadLyrics,
+            viewModel::setNeteaseDownloadLyrics,
+        )
+        GroupDivider()
+        SettingSwitch(
+            Icons.Rounded.Image,
+            "同时保存封面",
+            "下载时把专辑封面另存为 .jpg，和音频放在一起（封面本身也会内嵌到音频文件里）",
+            settings.neteaseDownloadCover,
+            viewModel::setNeteaseDownloadCover,
+        )
+        GroupDivider()
+        val folderContext = LocalContext.current
+        var pathDialog by remember { mutableStateOf(false) }
+        var folderPermission by remember { mutableStateOf(viewModel.hasFolderPermission()) }
+        val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            folderPermission = viewModel.hasFolderPermission()
+        }
+        LinkRow(
+            Icons.Rounded.FolderOpen,
+            "文件夹删除权限",
+            if (folderPermission) "已授权：删除下载时可一并移除空文件夹" else "未授权：删除后文件夹会留在 Download 里",
+        ) {
+            if (folderPermission) return@LinkRow
+            runCatching {
+                permissionLauncher.launch(
+                    Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, android.net.Uri.parse("package:${folderContext.packageName}")),
+                )
+            }
+        }
+        GroupDivider()
+        LinkRow(
+            Icons.Rounded.FolderOpen,
+            "下载位置",
+            "${com.olbyine.music.data.NeteaseDownloader.FOLDER}",
+        ) { pathDialog = true }
+        if (pathDialog) {
+            val haptics = rememberHaptics()
+            val path = com.olbyine.music.data.NeteaseDownloader.FOLDER
+            OlbyineDialog(
+                onDismissRequest = { pathDialog = false },
+                title = "下载位置",
+                confirmButton = {
+                    GlassTextButton(onClick = {
+                        val clipboard = folderContext.getSystemService(android.content.ClipboardManager::class.java)
+                        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("下载位置", path))
+                        haptics.light(com.olbyine.music.data.HapticArea.MENUS)
+                        pathDialog = false
+                    }) { Text("复制路径") }
+                },
+                dismissButton = { GlassTextButton(onClick = { pathDialog = false }) { Text("关闭") } },
+            ) {
+                Column {
+                    Text(path, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "只下载音频时：文件以「歌手 - 歌名」命名，直接放在上面的目录，系统音乐库能扫到。\n\n" +
+                            "开启「同时保存歌词」或「同时保存封面」后：会为每首歌新建一个子文件夹，" +
+                            "文件夹名、音频、封面（.jpg）、歌词（.lrc）统一都用「歌手 - 歌名」命名，方便整包拷走。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "路径由 Android 媒体库决定，无法直接改到任意目录；想换位置可以在「下载管理」里删除后重新下载。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
     SettingsGroup("Apple Music") {
         StorefrontRow(apple.storefront, viewModel::setAppleStorefront)
         GroupDivider()
@@ -880,9 +995,18 @@ private fun HapticsPage(state: MainUiState, viewModel: MainViewModel) {
     }
 }
 
-private class Credit(val name: String, val repo: String, val author: String, val license: String, val usage: String, val avatar: Int)
+private class Credit(
+    val name: String,
+    val repo: String,
+    val author: String,
+    val license: String,
+    val usage: String,
+    val avatar: Int? = null,
+)
 
 private val Credits = listOf(
+    Credit("Olbyine Music", "Huliang2597/olbyine-music", "BydEaOlline", "AGPL-3.0", "本项目 Olbyine 的上游基础"),
+    Credit("洛雪音乐 LX Music", "lyswhut/lx-music-desktop", "lyswhut", "Apache-2.0", "自定义源协议、榜单与推荐歌单接口的参考实现"),
     Credit("Apple Music-like Lyrics", "Steve-xmh/applemusic-like-lyrics", "Steve-xmh", "AGPL-3.0", "歌词引擎（内置修改版）与流动背景算法", R.drawable.avatar_steve_xmh),
     Credit("AMLL DroidMate", "Zeehan2005/AMLL-DroidMate", "Zeehan2005", "AGPL-3.0", "歌词引擎的 Android 接入与歌词搜索", R.drawable.avatar_zeehan2005),
     Credit("AndroidLiquidGlass", "Kyant0/AndroidLiquidGlass", "Kyant0", "Apache-2.0", "液态玻璃透镜、折射与高光着色器", R.drawable.avatar_kyant0),
@@ -906,6 +1030,10 @@ private val Credits = listOf(
     Credit("Jetpack Compose", "androidx/androidx", "Google", "Apache-2.0", "界面框架", R.drawable.avatar_androidx),
     Credit("OkHttp", "square/okhttp", "Square", "Apache-2.0", "网络请求", R.drawable.avatar_square),
     Credit("ZXing", "zxing/zxing", "ZXing", "Apache-2.0", "二维码生成", R.drawable.avatar_zxing),
+    Credit("Kotlin", "JetBrains/kotlin", "JetBrains", "Apache-2.0", "开发语言与标准库"),
+    Credit("Kotlin Coroutines", "Kotlin/kotlinx.coroutines", "JetBrains", "Apache-2.0", "协程与异步任务"),
+    Credit("AndroidX", "androidx/androidx", "Google", "Apache-2.0", "Activity、Lifecycle、Core、DocumentFile 等基础库", R.drawable.avatar_androidx),
+    Credit("Guava", "google/guava", "Google", "Apache-2.0", "集合与并发工具"),
 )
 
 @Composable
@@ -985,11 +1113,24 @@ private fun CreditRow(credit: Credit, onClick: () -> Unit) {
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Image(
-            androidx.compose.ui.res.painterResource(credit.avatar),
-            credit.author,
-            Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHighest),
-        )
+        if (credit.avatar != null) {
+            Image(
+                androidx.compose.ui.res.painterResource(credit.avatar),
+                credit.author,
+                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHighest),
+            )
+        } else {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    credit.name.take(1).uppercase(),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(credit.name, style = MaterialTheme.typography.titleSmall)
@@ -1016,6 +1157,8 @@ private fun glassColorsOf(page: SettingsPage): List<Color> = when (page) {
     SettingsPage.EQUALIZER -> GlassIconColors.green
     SettingsPage.LIBRARY -> GlassIconColors.orange
     SettingsPage.ONLINE -> GlassIconColors.blue
+    SettingsPage.DOWNLOADS -> GlassIconColors.teal
+    SettingsPage.BACKUP -> GlassIconColors.indigo
     SettingsPage.HAPTICS -> GlassIconColors.red
     SettingsPage.ABOUT -> GlassIconColors.graphite
 }
@@ -1075,7 +1218,7 @@ private fun StyleCard(state: MainUiState, onClick: () -> Unit) {
         ) { StyledIcon(Icons.Rounded.MusicNote, null, Modifier.size(28.dp), tint = if (spec.style == UiStyle.IOS) Color.White else colors.onPrimary) }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text("Olbyine-X", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("Olbyine", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(
                 "${state.settings.uiStyle.label} 风格 · " + when (state.settings.themeMode) {
                     com.olbyine.music.data.ThemeMode.DARK -> "深色"
@@ -1379,7 +1522,7 @@ private fun pinCustomShortcut(context: android.content.Context, uri: android.net
         val square = android.graphics.Bitmap.createBitmap(decoded, (decoded.width - side) / 2, (decoded.height - side) / 2, side, side)
         val icon = android.graphics.Bitmap.createScaledBitmap(square, 432, 432, true)
         val info = ShortcutInfo.Builder(context, "olbyine-custom-${System.currentTimeMillis()}")
-            .setShortLabel("Olbyine-X")
+            .setShortLabel("Olbyine")
             .setIcon(PlatformIcon.createWithAdaptiveBitmap(icon))
             .setIntent(Intent(Intent.ACTION_MAIN, null, context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             .build()
@@ -1389,7 +1532,7 @@ private fun pinCustomShortcut(context: android.content.Context, uri: android.net
 }
 
 @Composable
-private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
     val spec = LocalStyleSpec.current
     Column(Modifier.fillMaxWidth().padding(top = if (title.isBlank()) 14.dp else 20.dp)) {
         if (title.isNotBlank()) Overline(title, Modifier.padding(start = spec.cardMargin + 18.dp, bottom = 8.dp))
@@ -1417,7 +1560,7 @@ internal fun cardColor(): Color {
 }
 
 @Composable
-private fun GroupDivider() {
+internal fun GroupDivider() {
     if (!LocalStyleSpec.current.dividers) return
     HorizontalDivider(
         Modifier.padding(start = 66.dp),
@@ -1466,7 +1609,7 @@ private fun IconTile(icon: ImageVector) {
 private fun lerpColor(a: Color, b: Color, t: Float) = androidx.compose.ui.graphics.lerp(a, b, t)
 
 @Composable
-private fun SettingSwitch(icon: ImageVector, title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SettingSwitch(icon: ImageVector, title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth()
             .clickable(role = Role.Switch) { onChange(!checked) }
@@ -1485,7 +1628,7 @@ private fun SettingSwitch(icon: ImageVector, title: String, description: String,
 }
 
 @Composable
-private fun LinkRow(icon: ImageVector, title: String, description: String, onClick: () -> Unit) {
+internal fun LinkRow(icon: ImageVector, title: String, description: String, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1777,7 +1920,7 @@ private fun AboutRow() {
         }
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            Text("Olbyine-X", style = MaterialTheme.typography.titleLarge)
+            Text("Olbyine", style = MaterialTheme.typography.titleLarge)
             Text(
                 "版本 ${BuildConfig.VERSION_NAME} 正式版",
                 style = MaterialTheme.typography.bodySmall,

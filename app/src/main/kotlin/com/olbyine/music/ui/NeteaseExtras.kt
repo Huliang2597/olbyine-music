@@ -121,7 +121,7 @@ internal fun NeteasePlaylistPicker(
 }
 
 @Composable
-private fun PickerRow(leading: @Composable () -> Unit, title: String, subtitle: String?, onClick: () -> Unit) {
+internal fun PickerRow(leading: @Composable () -> Unit, title: String, subtitle: String?, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

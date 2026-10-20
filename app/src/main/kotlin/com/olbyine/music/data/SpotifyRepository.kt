@@ -157,7 +157,7 @@ class SpotifyRepository(context: Context) {
 
     private suspend fun accessToken(): String = tokenMutex.withLock {
         val access = preferences.getString(KEY_ACCESS, null)
-        if (access != null && System.currentTimeMillis() < preferences.getLong(KEY_EXPIRES, 0L) - 60_000L) return@withLock access
+        if (access != null && System.currentTimeMillis() < runCatching { preferences.getLong(KEY_EXPIRES, 0L) }.getOrDefault(0L) - 60_000L) return@withLock access
         val refresh = preferences.getString(KEY_REFRESH, null) ?: error("请先连接 Spotify")
         val body = FormBody.Builder()
             .add("grant_type", "refresh_token")

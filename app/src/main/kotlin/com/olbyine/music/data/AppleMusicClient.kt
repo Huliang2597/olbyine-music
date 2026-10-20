@@ -96,7 +96,7 @@ class AppleMusicClient(context: Context) {
     suspend fun account(forceRefresh: Boolean = false): AppleAccount? = withContext(Dispatchers.IO) {
         val userToken = preferences.getString(KEY_USER_TOKEN, null) ?: return@withContext null
         val cached = preferences.getString(KEY_ACCOUNT_STOREFRONT, null)
-        val checkedAt = preferences.getLong(KEY_ACCOUNT_CHECKED, 0L)
+        val checkedAt = runCatching { preferences.getLong(KEY_ACCOUNT_CHECKED, 0L) }.getOrDefault(0L)
         if (!forceRefresh && cached != null && System.currentTimeMillis() - checkedAt < 86_400_000L) {
             return@withContext AppleAccount(cached, preferences.getString(KEY_ACCOUNT_LANGUAGE, null) ?: "en-US")
         }
@@ -323,7 +323,7 @@ class AppleMusicClient(context: Context) {
 
     private suspend fun developerToken(forceRefresh: Boolean = false): String = tokenMutex.withLock {
         val cached = preferences.getString(KEY_DEV_TOKEN, null)
-        val expiry = preferences.getLong(KEY_DEV_TOKEN_EXP, 0L)
+        val expiry = runCatching { preferences.getLong(KEY_DEV_TOKEN_EXP, 0L) }.getOrDefault(0L)
         if (!forceRefresh && cached != null && System.currentTimeMillis() < expiry - 3_600_000L) return@withLock cached
         val token = withContext(Dispatchers.IO) { scrapeToken() }
         preferences.edit()

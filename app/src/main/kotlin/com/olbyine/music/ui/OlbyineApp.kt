@@ -268,11 +268,21 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val albums by viewModel.albums.collectAsState()
     val importProgress by viewModel.importProgress.collectAsState()
     val albumRequest by viewModel.albumRequest.collectAsState()
+    val composerRequest by viewModel.composerRequest.collectAsState()
     val trackReveal by viewModel.trackReveal.collectAsState()
     val onlineReveal by viewModel.onlineReveal.collectAsState()
     val appUpdate by viewModel.appUpdate.collectAsState()
+    val neteaseDownloads by viewModel.neteaseDownloads.collectAsState()
+    val kuwoState by viewModel.kuwoState.collectAsState()
+    var downloadTarget by remember { mutableStateOf<com.olbyine.music.data.NeteaseSong?>(null) }
     var scRevealUser by remember { mutableStateOf<com.olbyine.music.data.ScUser?>(null) }
     var playlistPickerFor by remember { mutableStateOf<Track?>(null) }
+    val neteaseLike = remember(neteaseState.liked, viewModel) {
+        NeteaseLikeActions(
+            isLiked = { id -> id in neteaseState.liked },
+            toggle = { id -> viewModel.toggleNeteaseLike(id) },
+        )
+    }
     val trackActions = remember(viewModel) {
         TrackActions(
             addToPlaylist = { playlistPickerFor = it },
@@ -290,6 +300,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         val request = onlineReveal ?: return@LaunchedEffect
         streamingProvider = request.provider
         viewModel.navigateTo(AppDestination.ONLINE)
+        if (request.provider == "kuwo") viewModel.clearOnlineReveal()
         if (request.provider == "soundcloud" && request.scTrackId > 0) {
             scRevealUser = runCatching { viewModel.soundCloud.trackInfo(request.scTrackId).second }.getOrNull()
         }
@@ -464,6 +475,10 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     LaunchedEffect(state.destination) {
         if (state.destination != AppDestination.NOW_PLAYING) baseDestination = state.destination
     }
+    val neteaseSignedIn = viewModel.neteaseClient.account.collectAsState().value != null
+    LaunchedEffect(state.libraryLoaded, neteaseSignedIn) {
+        if (state.libraryLoaded && neteaseSignedIn) viewModel.startComposerEnrichment()
+    }
     LaunchedEffect(playerOpen) {
         if (playerOpen && launchBounds == null && sheet.value < .01f && !sheet.dragging) {
             val pressed = AppTouchOrigin.bounds?.takeIf {
@@ -534,6 +549,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         }.collect { mode -> activity?.applyRefreshMode(mode) }
     }
 
+    // 洛雪歌单页的返回交给 PageStack 的 PredictiveBackHandler，这里只管播放页/歌词，
+    // 否则这个 enabled 的普通 BackHandler 会压掉预测返回手势。
     androidx.compose.runtime.key(playerOpen || state.lyricsVisible) {
         BackHandler(enabled = playerOpen || state.lyricsVisible) {
             when {
@@ -587,7 +604,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                     if (p > 0f) drawRect(Color.Black.copy(alpha = 0.38f * p))
                 },
         ) {
-            CompositionLocalProvider(LocalTrackActions provides trackActions, LocalGlassPopupHost provides basePopups, LocalOpenWebDav provides { webDavOpen = true }, LocalAppLayout provides appLayout, LocalLyricFeed provides LyricFeed(playerLyrics, playerLyrics.trackId, miniClock, state.settings.lyricTranslation), LocalNeteaseComments provides openComments, LocalScComments provides openScComments, LocalSearchSoundCloud provides searchSoundCloud, LocalNeteaseProfile provides openNeteaseProfile, LocalNeteaseChat provides openChat, LocalNeteaseLinks provides openNeteaseLink, LocalOpenArtist provides openArtist, LocalPlayerLaunch provides { bounds -> if (sheet.value < 0.001f && !sheet.dragging) launchBounds = bounds }) {
+            CompositionLocalProvider(LocalTrackActions provides trackActions, LocalNeteaseLike provides neteaseLike, LocalGlassPopupHost provides basePopups, LocalOpenWebDav provides { webDavOpen = true }, LocalAppLayout provides appLayout, LocalLyricFeed provides LyricFeed(playerLyrics, playerLyrics.trackId, miniClock, state.settings.lyricTranslation), LocalNeteaseComments provides openComments, LocalScComments provides openScComments, LocalSearchSoundCloud provides searchSoundCloud, LocalNeteaseProfile provides openNeteaseProfile, LocalNeteaseChat provides openChat, LocalNeteaseLinks provides openNeteaseLink, LocalOpenArtist provides openArtist, LocalPlayerLaunch provides { bounds -> if (sheet.value < 0.001f && !sheet.dragging) launchBounds = bounds }) {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
                 containerColor = MaterialTheme.colorScheme.background,
@@ -673,14 +690,24 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                 var providerMenu by remember { mutableStateOf(false) }
                                 Box {
                                     PillButton(
-                                        when (streamingProvider) { "soundcloud" -> "SoundCloud"; "navidrome" -> "Navidrome"; else -> "网易云" },
+                                        when (streamingProvider) {
+                                            "soundcloud" -> "SoundCloud"
+                                            "navidrome" -> "Navidrome"
+                                            "kuwo" -> "洛雪音乐"
+                                            else -> "网易云"
+                                        },
                                         { providerMenu = true },
                                         icon = Icons.Rounded.SwapHoriz,
                                         style = PillStyle.TONAL,
                                         height = 36.dp,
                                     )
                                     OlbyineDropdownMenu(expanded = providerMenu, onDismissRequest = { providerMenu = false }) {
-                                        listOf("netease" to "网易云音乐", "soundcloud" to "SoundCloud", "navidrome" to "Navidrome").forEach { (key, label) ->
+                                        listOf(
+                                            "netease" to "网易云音乐",
+                                            "kuwo" to "洛雪音乐",
+                                            "soundcloud" to "SoundCloud",
+                                            "navidrome" to "Navidrome",
+                                        ).forEach { (key, label) ->
                                             GlassMenuItem(label, {
                                                 providerMenu = false
                                                 if (key != streamingProvider) {
@@ -692,6 +719,10 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                     }
                                 }
                             },
+                            LocalPlayNextTrack provides { track -> runPlaybackAction { viewModel.playNext(listOf(track)) } },
+                            LocalNeteaseDownload provides { song -> downloadTarget = song },
+                            LocalDownloadTrack provides { track -> downloadTarget = neteaseSongOf(track) },
+                            LocalNeteaseDownloads provides neteaseDownloads,
                             LocalSearchSoundCloud provides searchSoundCloud,
                             LocalNcmPush provides pushNcm,
                             LocalCollectionResume provides { key -> collectionResume[key] },
@@ -704,12 +735,38 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             AnimatedContent(
                                 targetState = streamingProvider,
                                 transitionSpec = {
-                                    val order = listOf("netease", "soundcloud", "navidrome")
+                                    val order = listOf("netease", "kuwo", "soundcloud", "navidrome")
                                     tabSwitch(if (order.indexOf(targetState) > order.indexOf(initialState)) 1 else -1, tabMaterial, tabReduce)
                                 },
                                 label = "streaming-provider",
                             ) { provider ->
-                            if (provider == "navidrome") {
+                            if (provider == "kuwo") {
+                                KuwoScreen(
+                                    state = kuwoState,
+                                    bottomPadding = scaffoldPadding.calculateBottomPadding(),
+                                    currentTrackId = state.currentTrack?.id,
+                                    isPlaying = state.playback.isPlaying,
+                                    onSearch = viewModel::searchKuwo,
+                                    onSearchPlaylists = viewModel::searchKuwoPlaylists,
+                                    onLoadHot = viewModel::loadKuwoHot,
+                                    onLoadMine = viewModel::loadLxPlaylists,
+                                    onLoadExplore = viewModel::loadKuwoExplore,
+                                    onRecommendSort = viewModel::setKuwoRecommendSort,
+                                    onOpenBoard = viewModel::openKuwoBoard,
+                                    onOpenPlaylist = viewModel::openKuwoPlaylist,
+                                    onOpenMine = viewModel::openLxPlaylist,
+                                    onDeleteMine = viewModel::deleteLxPlaylist,
+                                    onRenameMine = viewModel::renameLxPlaylist,
+                                    onCreateMine = viewModel::createLxPlaylist,
+                                    onImportBytes = { bytes, name -> viewModel.importLxPlaylistFile(bytes, name) },
+                                    onImportText = { text, name -> viewModel.importLxPlaylist(text, name) },
+                                    onExportMine = { id -> viewModel.exportLxPlaylist(id) },
+                                    onAddToMine = { id, songs -> viewModel.addSongsToLxPlaylist(id, songs) },
+                                    onCloseCollection = viewModel::closeKuwoCollection,
+                                    backGestureEnabled = !playerOpen && !state.lyricsVisible,
+                                    onPlay = { songs, index, shuffle -> runPlaybackAction { viewModel.playKuwo(songs, index, shuffle) } },
+                                )
+                            } else if (provider == "navidrome") {
                                 NavidromeScreen(
                                     client = viewModel.navidrome,
                                     bottomPadding = scaffoldPadding.calculateBottomPadding(),
@@ -772,6 +829,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onSearch = viewModel::setSearch,
                             onFilter = viewModel::setLibraryFilter,
                             onPlayTracks = { tracks, index, origin -> runPlaybackAction { viewModel.playTracks(tracks, index, origin) } },
+                            onPlayNext = { track -> runPlaybackAction { viewModel.playNext(listOf(track)) } },
                             onPlayInOrder = playInOrder,
                             onShufflePlay = shufflePlay,
                             onFavorite = viewModel::toggleFavorite,
@@ -796,6 +854,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onImportNeteasePlaylist = viewModel::openPlaylistImport,
                             onExternalLyrics = openListening,
                             albumRequest = albumRequest,
+                            composerRequest = composerRequest,
+                            onComposerRequestHandled = viewModel::consumeComposerRequest,
                             revealTrackId = trackReveal,
                             onRevealHandled = viewModel::clearTrackReveal,
                             onPlayOrigin = viewModel::setPlayOrigin,
@@ -855,12 +915,18 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 )
             }
             CompositionLocalProvider(
+                LocalTrackActions provides trackActions,
                 LocalGlassPopupHost provides basePopups,
+                LocalNeteaseLike provides neteaseLike,
                 LocalNeteaseLinks provides openNeteaseLink,
                 LocalNeteaseProfile provides openNeteaseProfile,
                 LocalNeteaseComments provides openComments,
                 LocalNeteaseChat provides openChat,
                 LocalOpenArtist provides openArtist,
+                LocalPlayNextTrack provides { track -> runPlaybackAction { viewModel.playNext(listOf(track)) } },
+                LocalNeteaseDownload provides { song -> downloadTarget = song },
+                LocalDownloadTrack provides { track -> downloadTarget = neteaseSongOf(track) },
+                LocalNeteaseDownloads provides neteaseDownloads,
                 LocalCollectionResume provides { key -> collectionResume[key] },
                 LocalResumeCollection provides { key, songs -> runPlaybackAction { viewModel.resumeNeteaseCollection(key, songs) } },
                 LocalPlayNeteaseCollection provides { key, songs, index, shuffle, startMs ->
@@ -1159,6 +1225,18 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                         appScope.launch { openArtist(viewModel.neteaseArtistIdsOf(track).firstOrNull(), name) }
                                     } else openArtist(null, name)
                                 },
+                                localComposerCount = remember(state.tracks, track.composer) {
+                                    track.composer?.trim()?.takeIf { it.isNotEmpty() }?.let { composer ->
+                                        state.tracks.count { other -> other.composerNames().any { it.equals(composer, ignoreCase = true) } }
+                                    } ?: 0
+                                },
+                                localAlbumCount = remember(state.tracks, track.album, track.albumOwner) {
+                                    state.tracks.count { other ->
+                                        other.album.equals(track.album, ignoreCase = true) && other.albumOwner.equals(track.albumOwner, ignoreCase = true)
+                                    }
+                                },
+                                onLocalComposer = { viewModel.openComposerOf(track) },
+                                onLocalAlbum = { viewModel.openAlbumOf(track) },
                                 onAppear = { viewModel.autoDetails(track) },
                                 wiki = {
                                     SongWikiSection(
@@ -1313,6 +1391,9 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             )
         }
     }
+    LaunchedEffect(playlistPickerFor?.id) {
+        if (playlistPickerFor?.id?.startsWith("kw:") == true) viewModel.loadLxPlaylists()
+    }
     val ncmPickId = playlistPickerFor?.id?.takeIf { it.startsWith("ncm:") }?.removePrefix("ncm:")?.toLongOrNull()
     val scPickId = playlistPickerFor?.id?.takeIf { it.startsWith("sc:") }?.removePrefix("sc:")?.toLongOrNull()
     val pickContext = LocalContext.current
@@ -1330,6 +1411,21 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         NeteasePlaylistPicker(
             client = viewModel.neteaseClient,
             onPick = { playlist -> playlistPickerFor = null; viewModel.addNeteaseSongToPlaylist(playlist, ncmPickId) },
+            onDismiss = { playlistPickerFor = null },
+        )
+    } else if (playlistPickerFor?.id?.startsWith("kw:") == true) {
+        val kwTrack = playlistPickerFor!!
+        LxPlaylistPicker(
+            playlists = kuwoState.mine,
+            trackTitle = kwTrack.title,
+            onAdd = { id ->
+                playlistPickerFor = null
+                viewModel.addTrackToLxPlaylist(id, kwTrack)
+            },
+            onCreate = { name ->
+                playlistPickerFor = null
+                viewModel.createLxPlaylistWithTrack(name, kwTrack)
+            },
             onDismiss = { playlistPickerFor = null },
         )
     } else playlistPickerFor?.let { target ->
@@ -1361,6 +1457,19 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 }
             }
         }
+    }
+    downloadTarget?.let { song ->
+        NeteaseDownloadDialog(
+            song = song,
+            defaultLevel = state.settings.neteaseDownloadQuality,
+            saveLyrics = state.settings.neteaseDownloadLyrics,
+            onDismiss = { downloadTarget = null },
+            onPick = { level ->
+                downloadTarget = null
+                viewModel.setNeteaseDownloadQuality(level)
+                viewModel.downloadNeteaseSong(song, level)
+            },
+        )
     }
     appUpdate?.let { update ->
         OlbyineDialog(
@@ -2216,4 +2325,17 @@ private fun VolumeHud(driver: com.olbyine.music.playback.usb.UsbDriverState, mod
             Text("${driver.volume}", style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"))
         }
     }
+}
+
+private fun neteaseSongOf(track: Track): com.olbyine.music.data.NeteaseSong? {
+    val id = track.id.removePrefix("ncm:").toLongOrNull()?.takeIf { track.id.startsWith("ncm:") } ?: return null
+    return com.olbyine.music.data.NeteaseSong(
+        id = id,
+        title = track.title,
+        artists = listOf(track.artist),
+        album = track.album,
+        durationMs = track.durationMs,
+        coverUrl = track.artworkUrl,
+        unavailable = false,
+    )
 }

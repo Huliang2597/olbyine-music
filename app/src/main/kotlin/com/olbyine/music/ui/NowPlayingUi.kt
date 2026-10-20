@@ -66,6 +66,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
@@ -316,6 +317,10 @@ internal fun PlayerPage(
                                 }
                                 if (onListenTogether != null) {
                                     GlassMenuItem("网易云一起听", { close(); onListenTogether() }, icon = Icons.Rounded.Headphones)
+                                }
+                                val downloadTrack = LocalDownloadTrack.current
+                                if (downloadTrack != null && track.id.startsWith("ncm:")) {
+                                    GlassMenuItem("下载", { close(); downloadTrack(track) }, icon = Icons.Rounded.FileDownload)
                                 }
                                 GlassMenuItem("匹配封面与信息", { close(); onMatchMetadata() }, icon = Icons.Rounded.Image)
                                 if (!track.isOnline) {

@@ -1,10 +1,9 @@
-# Olbyine-X
+# Olbyine
 
-Olbyine-X 是一个 Android 本地与流媒体音乐播放器，使用 Kotlin、Jetpack Compose 和 AndroidX Media3 构建。
+Olbyine 是一个 Android 本地与流媒体音乐播放器，使用 Kotlin、Jetpack Compose 和 AndroidX Media3 构建。
 
-> **关于本项目**：Olbyine-X 是 [Olbyine Music](https://github.com/Huliang2597/olbyine-music) 项目的一个分支（fork）。
-> 上游项目的全部功能、架构与代码基础都来自 Olbyine Music，本分支在此基础上继续维护与调整，
-> 应用显示名称改为 Olbyine-X，以便与上游区分。上游若继续更新，本分支会按需同步。
+> **关于本项目**：Olbyine 基于 [Olbyine Music](https://github.com/Huliang2597/olbyine-music) 继续维护，沿用 Olbyine 这个名称。
+> 上游项目的全部功能、架构与代码基础都来自 Olbyine Music，本分支在此基础上继续维护与调整，上游若继续更新会按需同步。
 > 遇到的问题请先确认是否在本分支上出现，再决定反馈给上游还是这里。
 
 ## 功能

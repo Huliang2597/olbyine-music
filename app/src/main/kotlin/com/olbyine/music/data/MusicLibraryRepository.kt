@@ -50,6 +50,8 @@ class MusicLibraryRepository(private val context: Context) {
     val lyricsRevision: StateFlow<Long> = _lyricsRevision.asStateFlow()
     private val _importProgress = MutableStateFlow<ImportProgress?>(null)
     val importProgress: StateFlow<ImportProgress?> = _importProgress.asStateFlow()
+    private val _composerScanDone = MutableStateFlow(false)
+    val composerScanDone: StateFlow<Boolean> = _composerScanDone.asStateFlow()
 
     init {
         scope.launch {
@@ -60,6 +62,8 @@ class MusicLibraryRepository(private val context: Context) {
             }
             runCatching { rescanTags(onlyMissing = true) }
             runCatching { repairMisreadTags() }
+            runCatching { backfillComposers() }
+            _composerScanDone.value = true
         }
     }
 
@@ -377,6 +381,7 @@ class MusicLibraryRepository(private val context: Context) {
         put(COL_DISC_NUMBER, metadata.discNumber)
         put(COL_YEAR, metadata.year)
         put(COL_ALBUM_ARTIST, metadata.albumArtist)
+        put(COL_COMPOSER, metadata.composer ?: "?")
         put(COL_SAMPLE_RATE, metadata.sampleRate)
         put(COL_BITS_PER_SAMPLE, metadata.bitsPerSample)
         put(COL_BITRATE, metadata.bitrate)
@@ -569,6 +574,69 @@ class MusicLibraryRepository(private val context: Context) {
                 "$COL_ID = ?",
                 arrayOf(id),
             )
+            refreshLocked()
+        }
+    }
+
+    suspend fun backfillComposers(): Int = withContext(Dispatchers.IO) {
+        val rows = mutex.withLock {
+            helper.readableDatabase.rawQuery(
+                "SELECT $COL_ID, $COL_URI, $COL_DISPLAY_NAME FROM $TABLE_TRACKS WHERE $COL_COMPOSER IS NULL",
+                null,
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2).orEmpty())) } }
+        }.filterNot { row -> row.second.startsWith("ncm://") || row.second.startsWith("sc://") || row.second.startsWith("kw://") || row.second.startsWith("nd:") }
+        if (rows.isEmpty()) return@withContext 0
+        var done = 0
+        rows.chunked(24).forEach { chunk ->
+            val updates = chunk.map { (id, uri, name) ->
+                val composer = runCatching {
+                    val target = Uri.parse(uri)
+                    embeddedComposer(target) ?: run {
+                        val retriever = MediaMetadataRetriever()
+                        try {
+                            retriever.setDataSource(context, target)
+                            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_COMPOSER)?.trim()?.ifEmpty { null }
+                        } finally {
+                            retriever.release()
+                        }
+                    }
+                }.getOrNull()
+                id to composer
+            }
+            mutex.withLock {
+                val db = helper.writableDatabase
+                db.beginTransaction()
+                try {
+                    updates.forEach { (id, composer) ->
+                        db.update(TABLE_TRACKS, ContentValues().apply { put(COL_COMPOSER, composer ?: "?") }, "$COL_ID = ?", arrayOf(id))
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            }
+            done += updates.size
+        }
+        mutex.withLock { refreshLocked() }
+        done
+    }
+
+    suspend fun setComposers(values: Map<String, Pair<String, String?>>) = withContext(Dispatchers.IO) {
+        if (values.isEmpty()) return@withContext
+        mutex.withLock {
+            val db = helper.writableDatabase
+            db.beginTransaction()
+            try {
+                values.forEach { (id, value) ->
+                    db.update(TABLE_TRACKS, ContentValues().apply {
+                        put(COL_COMPOSER, value.first)
+                        put(COL_COMPOSER_CREDIT, value.second)
+                    }, "$COL_ID = ?", arrayOf(id))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
             refreshLocked()
         }
     }
@@ -922,6 +990,7 @@ class MusicLibraryRepository(private val context: Context) {
                 year = tag(MediaMetadataRetriever.METADATA_KEY_YEAR)?.take(4)?.toIntOrNull()
                     ?: tag(MediaMetadataRetriever.METADATA_KEY_DATE)?.take(4)?.toIntOrNull() ?: wav?.year ?: 0,
                 albumArtist = rawAlbumArtist,
+                composer = embeddedComposer(uri) ?: tag(MediaMetadataRetriever.METADATA_KEY_COMPOSER),
                 sampleRate = tag(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE)?.toIntOrNull() ?: 0,
                 bitsPerSample = tag(MediaMetadataRetriever.METADATA_KEY_BITS_PER_SAMPLE)?.toIntOrNull() ?: 0,
                 bitrate = tag(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0,
@@ -931,6 +1000,12 @@ class MusicLibraryRepository(private val context: Context) {
         } finally {
             retriever.release()
         }
+    }
+
+    private fun embeddedComposer(uri: Uri): String? {
+        if (uri.scheme != "content" && uri.scheme != "file") return null
+        val values = ComposerTags.read { runCatching { context.contentResolver.openInputStream(uri) }.getOrNull() }
+        return values.joinToString(" / ").trim().takeIf(String::isNotEmpty)
     }
 
     private fun readWavTags(uri: Uri, fallbackName: String): WavTags? {
@@ -1300,7 +1375,7 @@ class MusicLibraryRepository(private val context: Context) {
             "$COL_MIME, $COL_SIZE, $COL_COVER, $COL_LYRICS_SOURCE, $COL_LYRICS_FORMAT, $COL_LYRICS_CONFIDENCE, " +
             "$COL_LYRICS_INSTRUMENTAL, $COL_LYRICS_LOOKUP_AT, $COL_LYRICS_LOOKUP_STATUS, $COL_FAVORITE, " +
             "$COL_ADDED_AT, $COL_FOLDER_ID, $COL_FOLDER_PATH, $COL_TRACK_NUMBER, $COL_DISC_NUMBER, $COL_YEAR, " +
-            "$COL_ALBUM_ARTIST, $COL_PLAY_COUNT, $COL_LAST_PLAYED, $COL_SAMPLE_RATE, $COL_BITS_PER_SAMPLE, $COL_BITRATE, " +
+            "$COL_ALBUM_ARTIST, $COL_COMPOSER, $COL_COMPOSER_CREDIT, $COL_PLAY_COUNT, $COL_LAST_PLAYED, $COL_SAMPLE_RATE, $COL_BITS_PER_SAMPLE, $COL_BITRATE, " +
             "(COALESCE(length($COL_LYRICS), 0) > 0 OR COALESCE(length($COL_WORD_LYRICS), 0) > 0) AS $COL_HAS_LYRICS " +
             "FROM $TABLE_TRACKS ORDER BY $COL_ADDED_AT DESC",
         null,
@@ -1341,6 +1416,8 @@ class MusicLibraryRepository(private val context: Context) {
         discNumber = getInt(getColumnIndexOrThrow(COL_DISC_NUMBER)),
         year = getInt(getColumnIndexOrThrow(COL_YEAR)),
         albumArtist = getString(getColumnIndexOrThrow(COL_ALBUM_ARTIST)),
+        composer = optionalString(COL_COMPOSER)?.takeIf { it.isNotBlank() && it != "?" },
+        composerCredit = optionalString(COL_COMPOSER_CREDIT),
         playCount = getInt(getColumnIndexOrThrow(COL_PLAY_COUNT)),
         lastPlayedAt = getLong(getColumnIndexOrThrow(COL_LAST_PLAYED)),
         sampleRate = getInt(getColumnIndexOrThrow(COL_SAMPLE_RATE)),
@@ -1368,6 +1445,7 @@ class MusicLibraryRepository(private val context: Context) {
         val discNumber: Int = 0,
         val year: Int = 0,
         val albumArtist: String? = null,
+        val composer: String? = null,
         val sampleRate: Int = 0,
         val bitsPerSample: Int = 0,
         val bitrate: Int = 0,
@@ -1440,6 +1518,9 @@ class MusicLibraryRepository(private val context: Context) {
                 createPlaylistTables(db)
             }
             if (oldVersion < 4) addTagColumns(db)
+            if (oldVersion == 4) db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_COMPOSER TEXT")
+            if (oldVersion in 4..7) db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_COMPOSER_CREDIT TEXT")
+            if (oldVersion in 5..7) db.execSQL("UPDATE $TABLE_TRACKS SET $COL_COMPOSER = NULL")
         }
 
         private fun addTagColumns(db: SQLiteDatabase) {
@@ -1453,6 +1534,8 @@ class MusicLibraryRepository(private val context: Context) {
             db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_BITS_PER_SAMPLE INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_BITRATE INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_TAGS_SCANNED INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_COMPOSER TEXT")
+            db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_COMPOSER_CREDIT TEXT")
         }
 
         private fun createPlaylistTables(db: SQLiteDatabase) {
@@ -1485,7 +1568,7 @@ class MusicLibraryRepository(private val context: Context) {
 
     internal companion object {
         const val DATABASE_NAME = "olbyine_native.db"
-        const val DATABASE_VERSION = 4
+        const val DATABASE_VERSION = 8
         const val TABLE_TRACKS = "tracks"
         const val TABLE_PLAYLISTS = "playlists"
         const val TABLE_PLAYLIST_TRACKS = "playlist_tracks"
@@ -1518,6 +1601,8 @@ class MusicLibraryRepository(private val context: Context) {
         const val COL_DISC_NUMBER = "disc_number"
         const val COL_YEAR = "year"
         const val COL_ALBUM_ARTIST = "album_artist"
+        const val COL_COMPOSER = "composer"
+        const val COL_COMPOSER_CREDIT = "composer_credit"
         const val COL_PLAY_COUNT = "play_count"
         const val COL_LAST_PLAYED = "last_played_at"
         const val COL_SAMPLE_RATE = "sample_rate"

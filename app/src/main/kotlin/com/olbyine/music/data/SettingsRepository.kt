@@ -10,6 +10,10 @@ class SettingsRepository(context: Context) {
     private val _settings = MutableStateFlow(read())
     val settings: StateFlow<UserSettings> = _settings.asStateFlow()
 
+    fun reload() {
+        _settings.value = read()
+    }
+
     fun setThemeMode(mode: ThemeMode) = update { it.copy(themeMode = mode) }
 
     fun setLyricFontSize(value: Float) = update {
@@ -134,6 +138,14 @@ class SettingsRepository(context: Context) {
     fun setUsbMaxVolume(value: Int) = update { it.copy(usbMaxVolume = value.coerceIn(10, 100)) }
     fun setNeteaseOnline(value: Boolean) = update { it.copy(neteaseOnline = value) }
 
+    fun setNeteaseDownloadQuality(value: String) = update { it.copy(neteaseDownloadQuality = value) }
+
+    fun setNeteaseDownloadLyrics(value: Boolean) = update { it.copy(neteaseDownloadLyrics = value) }
+
+    fun setNeteaseDownloadCover(value: Boolean) = update { it.copy(neteaseDownloadCover = value) }
+
+    fun setKuwoQuality(value: String) = update { it.copy(kuwoQuality = value) }
+
     fun setAutoUpdateCheck(value: Boolean) = update { it.copy(autoUpdateCheck = value) }
     fun setNeteaseQuality(value: String) = update { it.copy(neteaseQuality = value) }
 
@@ -210,89 +222,112 @@ class SettingsRepository(context: Context) {
             .putString(KEY_USB_VOLUME_MODE, next.usbVolumeMode.name)
             .putInt(KEY_USB_MAX_VOLUME, next.usbMaxVolume)
             .putBoolean(KEY_NETEASE_ONLINE, next.neteaseOnline)
+            .putString(KEY_NETEASE_DOWNLOAD_QUALITY, next.neteaseDownloadQuality)
+            .putBoolean(KEY_NETEASE_DOWNLOAD_LYRICS, next.neteaseDownloadLyrics)
+            .putBoolean(KEY_NETEASE_DOWNLOAD_COVER, next.neteaseDownloadCover)
+            .putString(KEY_KUWO_QUALITY, next.kuwoQuality)
             .putBoolean(KEY_AUTO_UPDATE, next.autoUpdateCheck)
             .putString(KEY_NETEASE_QUALITY, next.neteaseQuality)
             .apply()
         com.olbyine.music.playback.AudioEffects.update(next)
     }
 
+    private fun f(key: String, fallback: Float): Float = runCatching { preferences.getFloat(key, fallback) }
+        .getOrElse { runCatching { preferences.getInt(key, fallback.toInt()).toFloat() }.getOrDefault(fallback) }
+
+    private fun i(key: String, fallback: Int): Int = runCatching { preferences.getInt(key, fallback) }
+        .getOrElse { runCatching { preferences.getFloat(key, fallback.toFloat()).toInt() }.getOrDefault(fallback) }
+
+    private fun l(key: String, fallback: Long): Long = runCatching { preferences.getLong(key, fallback) }
+        .getOrElse { runCatching { preferences.getInt(key, fallback.toInt()).toLong() }.getOrDefault(fallback) }
+
+    private fun b(key: String, fallback: Boolean): Boolean = runCatching { preferences.getBoolean(key, fallback) }
+        .getOrElse { fallback }
+
+    private fun s(key: String, fallback: String?): String? = runCatching { preferences.getString(key, fallback) }
+        .getOrElse { fallback }
+
     private fun read(): UserSettings {
         val theme = runCatching {
-            ThemeMode.valueOf(preferences.getString(KEY_THEME, null) ?: ThemeMode.SYSTEM.name)
+            ThemeMode.valueOf(s(KEY_THEME, null) ?: ThemeMode.SYSTEM.name)
         }.getOrDefault(ThemeMode.SYSTEM)
         return UserSettings(
             themeMode = theme,
-            lyricFontSize = preferences.getFloat(KEY_LYRIC_SIZE, 30f),
-            lyricInactiveOpacity = preferences.getFloat(KEY_LYRIC_OPACITY, 0.38f),
-            lyricOffsetMs = preferences.getLong(KEY_LYRIC_OFFSET, 0L),
-            lyricAlignPosition = preferences.getFloat(KEY_LYRIC_ALIGN, .5f).coerceIn(.15f, .85f),
-            hapticsEnabled = preferences.getBoolean(KEY_HAPTICS, true),
-            statusBarLyricsEnabled = preferences.getBoolean(KEY_STATUS_BAR_LYRICS, false),
-            automaticLyricsEnabled = preferences.getBoolean(KEY_AUTOMATIC_LYRICS, false),
-            showLyricPreview = preferences.getBoolean(KEY_LYRIC_PREVIEW, true),
-            lyricFontWeight = preferences.getInt(KEY_LYRIC_WEIGHT, 700).coerceIn(100, 900),
-            lyricFontPath = preferences.getString(KEY_LYRIC_FONT_PATH, null),
-            usbBitPerfectEnabled = preferences.getBoolean(KEY_USB_BIT_PERFECT, true),
-            liquidGlassEnabled = preferences.getBoolean(KEY_LIQUID_GLASS, false),
-            dynamicAccentEnabled = preferences.getBoolean(KEY_DYNAMIC_ACCENT, true),
-            playerGlassButtons = preferences.getBoolean(KEY_PLAYER_GLASS_BUTTONS, true),
-            glassPopups = preferences.getBoolean(KEY_GLASS_POPUPS, true),
-            glassHighlight = preferences.getFloat("glass_highlight", 1f),
-            glassBlur = preferences.getFloat("glass_blur", 1f),
-            glassOpacity = preferences.getFloat("glass_opacity", 1f),
-            glassRefraction = preferences.getFloat("glass_refraction", 1f),
-            glassGyro = preferences.getBoolean("glass_gyro", true),
-            customBackgroundPath = preferences.getString(KEY_CUSTOM_BG, null),
-            customBackgroundBlur = preferences.getFloat(KEY_CUSTOM_BG_BLUR, 0.35f),
-            customBackgroundDim = preferences.getFloat(KEY_CUSTOM_BG_DIM, 0.35f),
-            customBackgroundOnPlayer = preferences.getBoolean(KEY_CUSTOM_BG_PLAYER, false),
-            motionCover = preferences.getBoolean(KEY_MOTION_COVER, true),
-            motionBackground = preferences.getBoolean(KEY_MOTION_BACKGROUND, false),
-            beatPulse = preferences.getBoolean(KEY_BEAT_PULSE, true),
-            lyricBlur = preferences.getBoolean(KEY_LYRIC_BLUR, false),
-            lyricTranslation = preferences.getBoolean(KEY_LYRIC_TRANSLATION, true),
-            lyricRomanization = preferences.getBoolean(KEY_LYRIC_ROMANIZATION, true),
-            lyricSubScale = preferences.getFloat(KEY_LYRIC_SUB_SCALE, .5f).coerceIn(.3f, 1f),
-            floatingLyrics = preferences.getBoolean(KEY_FLOATING_LYRICS, false),
-            floatingLyricsMode = preferences.getString(KEY_FLOATING_LYRICS_MODE, null) ?: "karaoke",
-            floatingLyricsLocked = preferences.getBoolean(KEY_FLOATING_LYRICS_LOCKED, false),
-            floatingLyricsColor = preferences.getInt(KEY_FLOATING_LYRICS_COLOR, 0),
-            lyricDoubleTapSeek = preferences.getBoolean(KEY_LYRIC_DOUBLE_TAP_SEEK, true),
-            lyricMvStyle = preferences.getString(KEY_LYRIC_MV_STYLE, null).orEmpty(),
-            showSourceSwitch = preferences.getBoolean(KEY_SOURCE_SWITCH, true),
-            backgroundStyle = preferences.getString(KEY_BACKGROUND_STYLE, null) ?: "ios",
-            usbDirectDriver = preferences.getBoolean(KEY_USB_DIRECT, false),
-            uiStyle = runCatching { UiStyle.valueOf(preferences.getString(KEY_UI_STYLE, null) ?: UiStyle.IOS.name) }.getOrDefault(UiStyle.IOS),
-            layoutMode = preferences.getString(KEY_LAYOUT_MODE, null)?.takeIf { it in LAYOUT_MODES } ?: "auto",
-            albumStyle = preferences.getString(KEY_ALBUM_STYLE, null)?.takeIf { it in ALBUM_STYLES } ?: "grid",
-            importMinDurationSec = preferences.getInt(KEY_IMPORT_MIN, 30),
-            importSkipDuplicates = preferences.getBoolean(KEY_IMPORT_DUPLICATES, true),
-            autoCompleteMetadata = preferences.getBoolean(KEY_AUTO_METADATA, true),
-            hapticAreas = preferences.getInt(KEY_HAPTIC_AREAS, HapticArea.DEFAULT),
-            artworkBackdrop = preferences.getBoolean(KEY_ARTWORK_BACKDROP, true),
-            playerFx = preferences.getInt(KEY_PLAYER_FX, PlayerFx.DEFAULT).let { saved ->
-                if (preferences.getInt(KEY_PLAYER_FX_REV, 1) < 2) saved or PlayerFx.GRADUAL_BLUR or PlayerFx.SHREDDER or PlayerFx.GLASS_ICONS or PlayerFx.BOUNCE_CARDS else saved
+            lyricFontSize = f(KEY_LYRIC_SIZE, 30f),
+            lyricInactiveOpacity = f(KEY_LYRIC_OPACITY, 0.38f),
+            lyricOffsetMs = l(KEY_LYRIC_OFFSET, 0L),
+            lyricAlignPosition = f(KEY_LYRIC_ALIGN, .5f).coerceIn(.15f, .85f),
+            hapticsEnabled = b(KEY_HAPTICS, true),
+            statusBarLyricsEnabled = b(KEY_STATUS_BAR_LYRICS, false),
+            automaticLyricsEnabled = b(KEY_AUTOMATIC_LYRICS, false),
+            showLyricPreview = b(KEY_LYRIC_PREVIEW, true),
+            lyricFontWeight = i(KEY_LYRIC_WEIGHT, 700).coerceIn(100, 900),
+            lyricFontPath = s(KEY_LYRIC_FONT_PATH, null),
+            usbBitPerfectEnabled = b(KEY_USB_BIT_PERFECT, true),
+            liquidGlassEnabled = b(KEY_LIQUID_GLASS, false),
+            dynamicAccentEnabled = b(KEY_DYNAMIC_ACCENT, true),
+            playerGlassButtons = b(KEY_PLAYER_GLASS_BUTTONS, true),
+            glassPopups = b(KEY_GLASS_POPUPS, true),
+            glassHighlight = f("glass_highlight", 1f),
+            glassBlur = f("glass_blur", 1f),
+            glassOpacity = f("glass_opacity", 1f),
+            glassRefraction = f("glass_refraction", 1f),
+            glassGyro = b("glass_gyro", true),
+            customBackgroundPath = s(KEY_CUSTOM_BG, null),
+            customBackgroundBlur = f(KEY_CUSTOM_BG_BLUR, 0.35f),
+            customBackgroundDim = f(KEY_CUSTOM_BG_DIM, 0.35f),
+            customBackgroundOnPlayer = b(KEY_CUSTOM_BG_PLAYER, false),
+            motionCover = b(KEY_MOTION_COVER, true),
+            motionBackground = b(KEY_MOTION_BACKGROUND, false),
+            beatPulse = b(KEY_BEAT_PULSE, true),
+            lyricBlur = b(KEY_LYRIC_BLUR, false),
+            lyricTranslation = b(KEY_LYRIC_TRANSLATION, true),
+            lyricRomanization = b(KEY_LYRIC_ROMANIZATION, true),
+            lyricSubScale = f(KEY_LYRIC_SUB_SCALE, .5f).coerceIn(.3f, 1f),
+            floatingLyrics = b(KEY_FLOATING_LYRICS, false),
+            floatingLyricsMode = s(KEY_FLOATING_LYRICS_MODE, null) ?: "karaoke",
+            floatingLyricsLocked = b(KEY_FLOATING_LYRICS_LOCKED, false),
+            floatingLyricsColor = i(KEY_FLOATING_LYRICS_COLOR, 0),
+            lyricDoubleTapSeek = b(KEY_LYRIC_DOUBLE_TAP_SEEK, true),
+            lyricMvStyle = s(KEY_LYRIC_MV_STYLE, null).orEmpty(),
+            showSourceSwitch = b(KEY_SOURCE_SWITCH, true),
+            backgroundStyle = s(KEY_BACKGROUND_STYLE, null) ?: "ios",
+            usbDirectDriver = b(KEY_USB_DIRECT, false),
+            uiStyle = runCatching { UiStyle.valueOf(s(KEY_UI_STYLE, null) ?: UiStyle.IOS.name) }.getOrDefault(UiStyle.IOS),
+            layoutMode = s(KEY_LAYOUT_MODE, null)?.takeIf { it in LAYOUT_MODES } ?: "auto",
+            albumStyle = s(KEY_ALBUM_STYLE, null)?.takeIf { it in ALBUM_STYLES } ?: "grid",
+            importMinDurationSec = i(KEY_IMPORT_MIN, 30),
+            importSkipDuplicates = b(KEY_IMPORT_DUPLICATES, true),
+            autoCompleteMetadata = b(KEY_AUTO_METADATA, true),
+            hapticAreas = i(KEY_HAPTIC_AREAS, HapticArea.DEFAULT),
+            artworkBackdrop = b(KEY_ARTWORK_BACKDROP, true),
+            playerFx = i(KEY_PLAYER_FX, PlayerFx.DEFAULT).let { saved ->
+                if (i(KEY_PLAYER_FX_REV, 1) < 2) saved or PlayerFx.GRADUAL_BLUR or PlayerFx.SHREDDER or PlayerFx.GLASS_ICONS or PlayerFx.BOUNCE_CARDS else saved
             },
-            notificationLyrics = preferences.getBoolean(KEY_NOTIFICATION_LYRICS, false),
-            bluetoothLyrics = preferences.getBoolean(KEY_BLUETOOTH_LYRICS, false),
-            transitionMode = runCatching { TransitionMode.valueOf(preferences.getString(KEY_TRANSITION, null) ?: "OFF") }.getOrDefault(TransitionMode.OFF),
-            crossfadeSeconds = preferences.getInt(KEY_CROSSFADE, 6),
-            floatOutput = preferences.getBoolean(KEY_FLOAT_OUTPUT, false),
-            eqEnabled = preferences.getBoolean(KEY_EQ_ENABLED, false),
-            eqPreset = preferences.getString(KEY_EQ_PRESET, null) ?: "flat",
-            eqBands = preferences.getString(KEY_EQ_BANDS, null)?.split(',')?.mapNotNull { it.toFloatOrNull() }
+            notificationLyrics = b(KEY_NOTIFICATION_LYRICS, false),
+            bluetoothLyrics = b(KEY_BLUETOOTH_LYRICS, false),
+            transitionMode = runCatching { TransitionMode.valueOf(s(KEY_TRANSITION, null) ?: "OFF") }.getOrDefault(TransitionMode.OFF),
+            crossfadeSeconds = i(KEY_CROSSFADE, 6),
+            floatOutput = b(KEY_FLOAT_OUTPUT, false),
+            eqEnabled = b(KEY_EQ_ENABLED, false),
+            eqPreset = s(KEY_EQ_PRESET, null) ?: "flat",
+            eqBands = s(KEY_EQ_BANDS, null)?.split(',')?.mapNotNull { it.toFloatOrNull() }
                 ?.takeIf { it.size == EqBands.size } ?: List(EqBands.size) { 0f },
-            eqPreamp = preferences.getFloat(KEY_EQ_PREAMP, 0f),
-            balance = preferences.getFloat(KEY_BALANCE, 0f),
-            monoAudio = preferences.getBoolean(KEY_MONO, false),
-            usbBitDepth = preferences.getInt(KEY_USB_BIT_DEPTH, 0),
-            usbDither = preferences.getBoolean(KEY_USB_DITHER, true),
-            usbBufferMs = preferences.getInt(KEY_USB_BUFFER, 240),
-            usbVolumeMode = runCatching { UsbVolumeMode.valueOf(preferences.getString(KEY_USB_VOLUME_MODE, null) ?: "HARDWARE") }.getOrDefault(UsbVolumeMode.HARDWARE),
-            usbMaxVolume = preferences.getInt(KEY_USB_MAX_VOLUME, 100),
-            neteaseOnline = preferences.getBoolean(KEY_NETEASE_ONLINE, true),
-            autoUpdateCheck = preferences.getBoolean(KEY_AUTO_UPDATE, true),
-            neteaseQuality = preferences.getString(KEY_NETEASE_QUALITY, null) ?: "exhigh",
+            eqPreamp = f(KEY_EQ_PREAMP, 0f),
+            balance = f(KEY_BALANCE, 0f),
+            monoAudio = b(KEY_MONO, false),
+            usbBitDepth = i(KEY_USB_BIT_DEPTH, 0),
+            usbDither = b(KEY_USB_DITHER, true),
+            usbBufferMs = i(KEY_USB_BUFFER, 240),
+            usbVolumeMode = runCatching { UsbVolumeMode.valueOf(s(KEY_USB_VOLUME_MODE, null) ?: "HARDWARE") }.getOrDefault(UsbVolumeMode.HARDWARE),
+            usbMaxVolume = i(KEY_USB_MAX_VOLUME, 100),
+            neteaseOnline = b(KEY_NETEASE_ONLINE, true),
+            neteaseDownloadQuality = s(KEY_NETEASE_DOWNLOAD_QUALITY, null) ?: "exhigh",
+            neteaseDownloadLyrics = b(KEY_NETEASE_DOWNLOAD_LYRICS, true),
+            neteaseDownloadCover = b(KEY_NETEASE_DOWNLOAD_COVER, false),
+            kuwoQuality = s(KEY_KUWO_QUALITY, "320k") ?: "320k",
+            autoUpdateCheck = b(KEY_AUTO_UPDATE, true),
+            neteaseQuality = s(KEY_NETEASE_QUALITY, null) ?: "exhigh",
         ).also { com.olbyine.music.playback.AudioEffects.update(it) }
     }
 
@@ -322,6 +357,10 @@ class SettingsRepository(context: Context) {
         const val KEY_USB_VOLUME_MODE = "usb_volume_mode"
         const val KEY_USB_MAX_VOLUME = "usb_max_volume"
         const val KEY_NETEASE_ONLINE = "netease_online"
+        const val KEY_NETEASE_DOWNLOAD_QUALITY = "netease_download_quality"
+        const val KEY_NETEASE_DOWNLOAD_LYRICS = "netease_download_lyrics"
+        const val KEY_NETEASE_DOWNLOAD_COVER = "netease_download_cover"
+        const val KEY_KUWO_QUALITY = "kuwo_quality"
         const val KEY_AUTO_UPDATE = "auto_update_check"
         const val KEY_NETEASE_QUALITY = "netease_quality"
         const val KEY_THEME = "theme"

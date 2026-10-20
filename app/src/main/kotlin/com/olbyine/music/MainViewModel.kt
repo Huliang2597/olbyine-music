@@ -33,6 +33,9 @@ import com.olbyine.music.playback.PlaybackState
 import com.olbyine.music.playback.UsbBitPerfectState
 import com.olbyine.music.playback.UsbBitPerfectStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -55,6 +58,7 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -249,6 +253,46 @@ data class OnlineReveal(
     val ndPlaylist: com.olbyine.music.data.NdPlaylist? = null,
 )
 
+data class KuwoUiState(
+    val query: String = "",
+    val searching: Boolean = false,
+    val hot: List<String> = emptyList(),
+    val results: List<com.olbyine.music.data.KuwoSong> = emptyList(),
+    val playlists: List<com.olbyine.music.data.KuwoPlaylist> = emptyList(),
+    val searchingPlaylists: Boolean = false,
+    val recommend: List<com.olbyine.music.data.KuwoPlaylist> = emptyList(),
+    val recommendSort: String = "hot",
+    val loadingRecommend: Boolean = false,
+    val boards: List<com.olbyine.music.data.KuwoBoard> = emptyList(),
+    val loadingBoards: Boolean = false,
+    val mine: List<com.olbyine.music.data.LxPlaylist> = emptyList(),
+    val mineOpen: Boolean = false,
+    val importing: String? = null,
+    val collection: com.olbyine.music.data.KuwoCollection? = null,
+    val collectionId: String = "",
+    val loadingCollection: Boolean = false,
+    val message: String? = null,
+)
+
+data class BackupUiState(
+    val busy: Boolean = false,
+    val message: String? = null,
+    val lastBackupAt: Long = 0L,
+    val lastRestoreAt: Long = 0L,
+)
+
+data class NeteaseDownloadState(
+    val songId: Long,
+    val title: String,
+    val level: String,
+    val progress: Float = 0f,
+    val done: Boolean = false,
+    val failed: Boolean = false,
+    val fileName: String = "",
+    val bytes: Long = 0L,
+    val totalBytes: Long = 0L,
+)
+
 data class CollectionResumePoint(
     val songId: Long,
     val title: String,
@@ -291,6 +335,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val trackReveal: StateFlow<LibraryReveal?> = _trackReveal
     private val _playOrigin = MutableStateFlow<PlayOrigin?>(null)
     val playOrigin: StateFlow<PlayOrigin?> = _playOrigin
+    private val _downloadRecords = MutableStateFlow(app.downloadRecords.all())
+    val downloadRecords: StateFlow<List<com.olbyine.music.data.DownloadRecord>> = _downloadRecords
+    private val _neteaseDownloads = MutableStateFlow<Map<Long, NeteaseDownloadState>>(emptyMap())
+    val neteaseDownloads: StateFlow<Map<Long, NeteaseDownloadState>> = _neteaseDownloads
+    private val _kuwo = MutableStateFlow(KuwoUiState())
+    val kuwoState: StateFlow<KuwoUiState> = _kuwo
+    private var kuwoJob: Job? = null
+    private val _backupState = MutableStateFlow(BackupUiState())
+    val backupState: StateFlow<BackupUiState> = _backupState
     private val _appUpdate = MutableStateFlow<com.olbyine.music.data.AppUpdate?>(null)
     val appUpdate: StateFlow<com.olbyine.music.data.AppUpdate?> = _appUpdate
     private val _updateChecking = MutableStateFlow(false)
@@ -578,6 +631,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+            track.id.startsWith("kw:") -> {
+                _onlineReveal.value = OnlineReveal(
+                    provider = "kuwo",
+                    trackId = track.id,
+                    title = track.title,
+                    artist = track.artist,
+                )
+                when (origin?.kind) {
+                    "kw:BOARD" -> openKuwoBoard(origin.id)
+                    "kw:PLAYLIST" -> origin.id.toLongOrNull()?.let { openKuwoPlaylist(it) }
+                    "kw:LX" -> openLxPlaylist(origin.id)
+                    else -> Unit
+                }
+            }
             track.id.startsWith("sc:") -> {
                 val scId = track.id.removePrefix("sc:").toLongOrNull() ?: return
                 _onlineReveal.value = OnlineReveal(
@@ -776,6 +843,548 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setUsbMaxVolume(value: Int) = settingsRepository.setUsbMaxVolume(value)
     fun setNeteaseOnline(value: Boolean) = settingsRepository.setNeteaseOnline(value)
     fun setNeteaseQuality(value: String) = settingsRepository.setNeteaseQuality(value)
+    fun setNeteaseDownloadQuality(value: String) = settingsRepository.setNeteaseDownloadQuality(value)
+    fun setNeteaseDownloadLyrics(value: Boolean) = settingsRepository.setNeteaseDownloadLyrics(value)
+
+    fun setNeteaseDownloadCover(value: Boolean) = settingsRepository.setNeteaseDownloadCover(value)
+
+    fun backupJson(): String = app.backup.exportJson()
+
+    fun summaryOf(json: String): com.olbyine.music.data.BackupSummary? = app.backup.summarize(json)
+
+    fun uploadBackup(server: com.olbyine.music.data.WebDavServer, password: String) {
+        if (_backupState.value.busy) return
+        _backupState.value = _backupState.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val url = app.backup.upload(server, password)
+                _backupState.value = BackupUiState(
+                    busy = false,
+                    message = "已备份到 $url",
+                    lastBackupAt = System.currentTimeMillis(),
+                )
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _backupState.value = _backupState.value.copy(busy = false, message = error.message ?: "备份失败")
+            }
+        }
+    }
+
+    fun restoreBackup(json: String, reload: () -> Unit) {
+        if (_backupState.value.busy) return
+        _backupState.value = _backupState.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val summary = app.backup.restore(json)
+                _backupState.value = BackupUiState(
+                    busy = false,
+                    message = "已恢复 ${summary.entries} 项（${summary.keys.size} 组）",
+                    lastRestoreAt = System.currentTimeMillis(),
+                )
+                reload()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _backupState.value = _backupState.value.copy(busy = false, message = error.message ?: "恢复失败")
+            }
+        }
+    }
+
+    fun restoreBackupFromCloud(server: com.olbyine.music.data.WebDavServer, password: String, reload: () -> Unit) {
+        if (_backupState.value.busy) return
+        _backupState.value = _backupState.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                val json = app.backup.download(server, password)
+                val summary = app.backup.restore(json)
+                _backupState.value = BackupUiState(
+                    busy = false,
+                    message = "已从云端恢复 ${summary.entries} 项（${summary.keys.size} 组）",
+                    lastRestoreAt = System.currentTimeMillis(),
+                )
+                reload()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _backupState.value = _backupState.value.copy(busy = false, message = error.message ?: "恢复失败")
+            }
+        }
+    }
+
+    fun clearBackupMessage() {
+        _backupState.value = _backupState.value.copy(message = null)
+    }
+
+    fun reloadSettings() {
+        settingsRepository.reload()
+    }
+
+    fun deleteDownload(record: com.olbyine.music.data.DownloadRecord, removeFile: Boolean) {
+        if (removeFile) {
+            listOfNotNull(record.audioUri.takeIf(String::isNotBlank), record.lyricsUri, record.coverUri).forEach { uri ->
+                runCatching { app.contentResolver.delete(android.net.Uri.parse(uri), null, null) }
+            }
+            val folderGone = purgeDownloadFolder(record.folder)
+            app.downloadRecords.remove(record.songId)
+            _downloadRecords.value = app.downloadRecords.all()
+            _neteaseDownloads.value = _neteaseDownloads.value - record.songId
+            message.value = if (folderGone) {
+                "已删除「${record.title}」及其文件夹"
+            } else {
+                "已删除文件，但文件夹需要「所有文件访问权限」才能移除，可在设置 → 下载里授权"
+            }
+            return
+        }
+        app.downloadRecords.remove(record.songId)
+        _downloadRecords.value = app.downloadRecords.all()
+        _neteaseDownloads.value = _neteaseDownloads.value - record.songId
+        message.value = "已移除「${record.title}」的下载记录"
+    }
+
+    fun clearDownloadRecords(removeFiles: Boolean) {
+        val records = app.downloadRecords.all()
+        var foldersLeft = 0
+        if (removeFiles) {
+            records.forEach { record ->
+                listOfNotNull(record.audioUri.takeIf(String::isNotBlank), record.lyricsUri, record.coverUri).forEach { uri ->
+                    runCatching { app.contentResolver.delete(android.net.Uri.parse(uri), null, null) }
+                }
+                if (!purgeDownloadFolder(record.folder)) foldersLeft++
+            }
+        }
+        app.downloadRecords.clear()
+        _downloadRecords.value = emptyList()
+        _neteaseDownloads.value = emptyMap()
+        message.value = when {
+            !removeFiles -> "已清空下载记录（文件保留）"
+            foldersLeft > 0 -> "已删除 ${records.size} 个文件，$foldersLeft 个空文件夹需要「所有文件访问权限」才能移除"
+            else -> "已清空下载记录并删除 ${records.size} 个文件"
+        }
+    }
+
+    fun refreshDownloadRecords() {
+        _downloadRecords.value = app.downloadRecords.all()
+    }
+
+    private fun purgeDownloadFolder(folder: String): Boolean {
+        if (folder.isBlank()) return true
+        val path = if (folder.endsWith("/")) folder else "$folder/"
+        val collections = listOf(
+            android.provider.MediaStore.Files.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY),
+            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+        )
+        collections.forEach { collection ->
+            runCatching {
+                app.contentResolver.delete(
+                    collection,
+                    "${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                    arrayOf(path),
+                )
+            }
+        }
+        runCatching {
+            val cursor = app.contentResolver.query(
+                android.provider.MediaStore.Files.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                arrayOf(android.provider.MediaStore.MediaColumns._ID),
+                "${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+                arrayOf("$path%"),
+                null,
+            )
+            cursor?.use { rows ->
+                val ids = ArrayList<Long>()
+                while (rows.moveToNext()) ids += rows.getLong(0)
+                ids.forEach { id ->
+                    runCatching {
+                        app.contentResolver.delete(
+                            android.provider.MediaStore.Files.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY, id),
+                            null,
+                            null,
+                        )
+                    }
+                }
+            }
+        }
+        return deleteDirectoryOnDisk(folder)
+    }
+
+    private fun deleteDirectoryOnDisk(folder: String): Boolean {
+        if (!canManageAllFiles()) return false
+        val root = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        val target = java.io.File(root, folder.removePrefix("Download/").trim('/'))
+        if (!target.exists()) return true
+        return runCatching { target.deleteRecursively() }.getOrDefault(false)
+    }
+
+    fun canManageAllFiles(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return true
+        return android.os.Environment.isExternalStorageManager()
+    }
+
+    fun hasFolderPermission(): Boolean = canManageAllFiles()
+
+    fun downloadNeteaseSong(song: com.olbyine.music.data.NeteaseSong, level: String) {
+        if (_neteaseDownloads.value[song.id]?.let { !it.done && !it.failed } == true) return
+        val settings = settingsRepository.settings.value
+        val saveLyrics = settings.neteaseDownloadLyrics
+        val saveCover = settings.neteaseDownloadCover
+        _neteaseDownloads.value = _neteaseDownloads.value + (song.id to NeteaseDownloadState(song.id, song.title, level))
+        app.downloadNotifier.progress(song.title, 0L, 0L)
+        viewModelScope.launch {
+            try {
+                val info = netease.downloadInfo(song.id, level)
+                val lyrics = if (saveLyrics) runCatching { netease.lyrics(song.id) }.getOrNull() else null
+                var lastReport = 0L
+                val result = app.neteaseDownloader.download(song, info, lyrics, saveLyrics, saveCover) { written, total ->
+                    val now = System.currentTimeMillis()
+                    if (now - lastReport < 350L && (total <= 0L || written < total)) return@download
+                    lastReport = now
+                    val fraction = if (total > 0L) (written.toFloat() / total).coerceIn(0f, 1f) else 0f
+                    val current = _neteaseDownloads.value[song.id] ?: return@download
+                    _neteaseDownloads.value = _neteaseDownloads.value + (
+                        song.id to current.copy(progress = fraction, bytes = written, totalBytes = total)
+                        )
+                    app.downloadNotifier.progress(song.title, written, total)
+                }
+                app.downloadRecords.add(
+                    com.olbyine.music.data.DownloadRecord(
+                        songId = song.id,
+                        title = song.title,
+                        artist = song.artist,
+                        album = song.album,
+                        fileName = result.fileName,
+                        folder = result.folder,
+                        bytes = result.bytes,
+                        level = result.level,
+                        audioUri = result.audioUri,
+                        lyricsUri = result.lyricsUri,
+                        coverUri = result.coverUri,
+                        at = System.currentTimeMillis(),
+                        tagged = result.tagged,
+                        coverEmbedded = result.coverEmbedded,
+                    ),
+                )
+                _downloadRecords.value = app.downloadRecords.all()
+                val current = _neteaseDownloads.value[song.id] ?: NeteaseDownloadState(song.id, song.title, level)
+                _neteaseDownloads.value = _neteaseDownloads.value + (
+                    song.id to current.copy(progress = 1f, done = true, fileName = result.fileName, bytes = result.bytes)
+                    )
+                val summary = buildString {
+                    append(com.olbyine.music.data.NeteaseClient.qualityBadge(result.level))
+                    if (result.tagged) append(" · 已写入标签")
+                    if (result.coverEmbedded) append("和封面")
+                    if (result.coverUri != null) append(" · 封面已单独保存")
+                    if (result.lyricsSaved) append(" · 含歌词")
+                }
+                app.downloadNotifier.done(song.title, summary)
+                message.value = "已下载「${song.title}」· $summary · ${result.folder}"
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                val current = _neteaseDownloads.value[song.id] ?: NeteaseDownloadState(song.id, song.title, level)
+                _neteaseDownloads.value = _neteaseDownloads.value + (
+                    song.id to current.copy(failed = true)
+                    )
+                val reason = error.message ?: "下载失败"
+                app.downloadNotifier.failed(song.title, reason)
+                message.value = reason
+            }
+        }
+    }
+
+    fun searchKuwo(query: String) {
+        _kuwo.value = _kuwo.value.copy(query = query, searching = true, message = null)
+        kuwoJob?.cancel()
+        if (query.isBlank()) {
+            _kuwo.value = _kuwo.value.copy(searching = false, results = emptyList())
+            return
+        }
+        kuwoJob = viewModelScope.launch {
+            try {
+                val results = app.kuwo.search(query)
+                _kuwo.value = _kuwo.value.copy(searching = false, results = results)
+                if (results.isEmpty()) _kuwo.value = _kuwo.value.copy(message = "没有找到相关歌曲")
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _kuwo.value = _kuwo.value.copy(searching = false, message = error.message ?: "搜索失败")
+            }
+        }
+    }
+
+    fun loadKuwoHot() {
+        if (_kuwo.value.hot.isNotEmpty()) return
+        viewModelScope.launch {
+            val hot = runCatching { app.kuwo.hotSearch() }.getOrDefault(emptyList())
+            _kuwo.value = _kuwo.value.copy(hot = hot)
+        }
+    }
+
+    fun openKuwoBoard(id: String) {
+        _kuwo.value = _kuwo.value.copy(loadingCollection = true, message = null)
+        kuwoJob?.cancel()
+        kuwoJob = viewModelScope.launch {
+            try {
+                val collection = app.kuwo.board(id)
+                _kuwo.value = _kuwo.value.copy(collection = collection, collectionId = "kw:BOARD:$id", loadingCollection = false)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _kuwo.value = _kuwo.value.copy(loadingCollection = false, message = error.message ?: "读取榜单失败")
+            }
+        }
+    }
+
+    fun openKuwoPlaylist(id: Long) {
+        _kuwo.value = _kuwo.value.copy(loadingCollection = true, message = null)
+        kuwoJob?.cancel()
+        kuwoJob = viewModelScope.launch {
+            try {
+                val collection = app.kuwo.playlist(id)
+                _kuwo.value = _kuwo.value.copy(collection = collection, collectionId = "kw:PLAYLIST:$id", loadingCollection = false)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _kuwo.value = _kuwo.value.copy(loadingCollection = false, message = error.message ?: "读取歌单失败")
+            }
+        }
+    }
+
+    fun closeKuwoCollection() {
+        _kuwo.value = _kuwo.value.copy(collection = null, collectionId = "")
+    }
+
+    fun searchKuwoPlaylists(query: String) {
+        _kuwo.value = _kuwo.value.copy(query = query, searchingPlaylists = true, message = null)
+        kuwoJob?.cancel()
+        if (query.isBlank()) {
+            _kuwo.value = _kuwo.value.copy(searchingPlaylists = false, playlists = emptyList())
+            return
+        }
+        kuwoJob = viewModelScope.launch {
+            try {
+                val playlists = app.kuwo.searchPlaylists(query)
+                _kuwo.value = _kuwo.value.copy(searchingPlaylists = false, playlists = playlists)
+                if (playlists.isEmpty()) _kuwo.value = _kuwo.value.copy(message = "没有找到相关歌单")
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _kuwo.value = _kuwo.value.copy(searchingPlaylists = false, message = error.message ?: "搜索歌单失败")
+            }
+        }
+    }
+
+    fun loadKuwoExplore() {
+        if (_kuwo.value.loadingRecommend || _kuwo.value.loadingBoards) return
+        if (_kuwo.value.recommend.isEmpty()) loadKuwoRecommend(_kuwo.value.recommendSort)
+        if (_kuwo.value.boards.isEmpty()) loadKuwoBoards()
+    }
+
+    fun setKuwoRecommendSort(sort: String) {
+        if (_kuwo.value.recommendSort == sort && _kuwo.value.recommend.isNotEmpty()) return
+        _kuwo.value = _kuwo.value.copy(recommendSort = sort)
+        loadKuwoRecommend(sort)
+    }
+
+    private fun loadKuwoRecommend(sort: String) {
+        _kuwo.value = _kuwo.value.copy(loadingRecommend = true)
+        viewModelScope.launch {
+            val list = runCatching { app.kuwo.recommendPlaylists(sort) }.getOrDefault(emptyList())
+            if (_kuwo.value.recommendSort != sort) return@launch
+            _kuwo.value = _kuwo.value.copy(recommend = list, loadingRecommend = false)
+        }
+    }
+
+    private fun loadKuwoBoards() {
+        _kuwo.value = _kuwo.value.copy(loadingBoards = true)
+        viewModelScope.launch {
+            val list = runCatching { app.kuwo.leaderboards() }.getOrDefault(com.olbyine.music.data.KuwoClient.BOARDS)
+            _kuwo.value = _kuwo.value.copy(boards = list, loadingBoards = false)
+        }
+    }
+
+    fun loadLxPlaylists() {
+        _kuwo.value = _kuwo.value.copy(mine = app.lxPlaylists.all().sortedByDescending { it.createdAt })
+    }
+
+    fun openLxMinePage() {
+        _kuwo.value = _kuwo.value.copy(mineOpen = true)
+        loadLxPlaylists()
+    }
+
+    fun closeLxMinePage() {
+        _kuwo.value = _kuwo.value.copy(mineOpen = false)
+    }
+
+    fun openLxPlaylist(id: String) {
+        val playlist = app.lxPlaylists.find(id) ?: return
+        _kuwo.value = _kuwo.value.copy(collection = playlist.toCollection(), collectionId = "lx:$id")
+    }
+
+    fun deleteLxPlaylist(id: String) {
+        app.lxPlaylists.remove(id)
+        loadLxPlaylists()
+        if (_kuwo.value.collectionId == "lx:$id") {
+            _kuwo.value = _kuwo.value.copy(collection = null, collectionId = "")
+        }
+        message.value = "已删除歌单"
+    }
+
+    /** 导入 .lxmc / .json 歌单文件；非酷我曲目按「歌名 + 歌手」在酷我匹配。 */
+    fun importLxPlaylistFile(bytes: ByteArray, fallbackName: String = "导入的歌单") {
+        val text = runCatching { com.olbyine.music.data.LxCodec.decode(bytes) }.getOrElse {
+            message.value = "导入失败：${it.message ?: "文件无法读取"}"
+            return
+        }
+        importLxPlaylist(text, fallbackName)
+    }
+
+    fun createLxPlaylist(name: String) {
+        val playlist = app.lxPlaylists.create(name)
+        loadLxPlaylists()
+        message.value = "已新建歌单「${playlist.name}」"
+    }
+
+    fun renameLxPlaylist(id: String, name: String) {
+        app.lxPlaylists.rename(id, name)
+        loadLxPlaylists()
+    }
+
+    fun createLxPlaylistWithSongs(name: String, songs: List<com.olbyine.music.data.KuwoSong>) {
+        val playlist = app.lxPlaylists.create(name)
+        val added = app.lxPlaylists.addSongs(playlist.id, songs)
+        loadLxPlaylists()
+        message.value = if (added == 0) "已新建「${playlist.name}」" else "已新建「${playlist.name}」并添加 $added 首"
+    }
+
+    /** 播放页「加入歌单」对洛雪曲目走这里：把 Track 还原成 KuwoSong 再入库。 */
+    fun addTrackToLxPlaylist(playlistId: String, track: Track) {
+        val songId = track.id.removePrefix("kw:").toLongOrNull() ?: return
+        val song = app.kuwo.song(songId) ?: com.olbyine.music.data.KuwoSong(
+            id = songId,
+            title = track.title,
+            artist = track.artist,
+            album = track.album,
+            durationMs = track.durationMs,
+            coverUrl = track.artworkUrl,
+        )
+        addSongsToLxPlaylist(playlistId, listOf(song))
+    }
+
+    fun createLxPlaylistWithTrack(name: String, track: Track) {
+        val songId = track.id.removePrefix("kw:").toLongOrNull() ?: return
+        val song = app.kuwo.song(songId) ?: com.olbyine.music.data.KuwoSong(
+            id = songId,
+            title = track.title,
+            artist = track.artist,
+            album = track.album,
+            durationMs = track.durationMs,
+            coverUrl = track.artworkUrl,
+        )
+        createLxPlaylistWithSongs(name, listOf(song))
+    }
+
+    fun addSongsToLxPlaylist(id: String, songs: List<com.olbyine.music.data.KuwoSong>) {
+        if (songs.isEmpty()) return
+        val added = app.lxPlaylists.addSongs(id, songs)
+        loadLxPlaylists()
+        val name = app.lxPlaylists.find(id)?.name.orEmpty()
+        message.value = if (added == 0) "这些歌已经在「$name」里了" else "已添加 $added 首到「$name」"
+    }
+
+    fun removeSongFromLxPlaylist(id: String, songId: Long) {
+        val title = app.lxPlaylists.find(id)?.songs?.firstOrNull { it.id == songId }?.title
+        app.lxPlaylists.removeSong(id, songId)
+        val playlist = app.lxPlaylists.find(id)
+        loadLxPlaylists()
+        if (playlist != null && _kuwo.value.collectionId == "lx:$id") {
+            _kuwo.value = _kuwo.value.copy(collection = playlist.toCollection())
+        }
+        message.value = if (title != null) "已从歌单移除「$title」" else "已从歌单移除"
+    }
+
+    /** 导出成洛雪音乐可直接导入的 .lxmc 字节。 */
+    fun exportLxPlaylist(id: String): ByteArray? {
+        val playlist = app.lxPlaylists.find(id) ?: return null
+        return runCatching { com.olbyine.music.data.LxCodec.encode(playlist) }.getOrElse {
+            message.value = "导出失败：${it.message ?: "无法生成文件"}"
+            null
+        }
+    }
+
+    fun importLxPlaylist(text: String, fallbackName: String = "导入的歌单") {
+        if (_kuwo.value.importing != null) return
+        viewModelScope.launch {
+            _kuwo.value = _kuwo.value.copy(importing = "正在解析…", message = null)
+            try {
+                val parsed = com.olbyine.music.data.LxPlaylistParser.parse(text, fallbackName)
+                var total = 0
+                var imported = 0
+                parsed.forEach { playlist ->
+                    val songs = ArrayList<com.olbyine.music.data.KuwoSong>()
+                    val entries = playlist.entries
+                    var index = 0
+                    while (index < entries.size) {
+                        val chunk = entries.subList(index, minOf(index + 3, entries.size))
+                        val resolved = kotlinx.coroutines.coroutineScope {
+                            chunk.map { entry ->
+                                async { runCatching { app.kuwo.resolveEntry(entry) }.getOrNull() }
+                            }.awaitAll()
+                        }
+                        songs += resolved.filterNotNull()
+                        index += chunk.size
+                        _kuwo.value = _kuwo.value.copy(
+                            importing = "正在匹配曲目 $index/${entries.size}",
+                        )
+                    }
+                    if (songs.isNotEmpty()) {
+                        app.lxPlaylists.add(
+                            com.olbyine.music.data.LxPlaylist(
+                                id = com.olbyine.music.data.LxPlaylistStore.newId(),
+                                name = playlist.name,
+                                songs = songs,
+                                createdAt = System.currentTimeMillis(),
+                                origin = "洛雪 lxmc",
+                                rawName = playlist.rawName,
+                                locationUpdateTime = playlist.locationUpdateTime,
+                            ),
+                        )
+                        imported++
+                    }
+                    total += songs.size
+                }
+                loadLxPlaylists()
+                _kuwo.value = _kuwo.value.copy(importing = null)
+                message.value = if (imported == 0) {
+                    "没有可播放的曲目（非酷我音源需要在酷我搜到同名歌曲）"
+                } else {
+                    "已导入 $imported 个歌单，共 $total 首"
+                }
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                _kuwo.value = _kuwo.value.copy(importing = null)
+                message.value = "导入失败：${error.message ?: "JSON 格式不正确"}"
+            }
+        }
+    }
+
+    fun playKuwo(songs: List<com.olbyine.music.data.KuwoSong>, index: Int, shuffle: Boolean = false) {
+        if (songs.isEmpty()) return
+        val queue = songs.map { it.toTrack() }
+        onlineTracks.value = onlineTracks.value + queue.associateBy(Track::id)
+        val start = index.coerceIn(0, queue.lastIndex)
+        if (shuffle && !uiState.value.playback.shuffleEnabled) playback.toggleShuffle()
+        val key = _kuwo.value.collectionId
+        setPlayOrigin(
+            if (key.isBlank()) {
+                null
+            } else {
+                val parts = key.split(":")
+                PlayOrigin(
+                    kind = parts.getOrNull(0) + ":" + parts.getOrNull(1),
+                    id = parts.drop(2).joinToString(":"),
+                    title = _kuwo.value.collection?.title.orEmpty(),
+                    cover = _kuwo.value.collection?.coverUrl,
+                )
+            },
+        )
+        playback.playQueue(queue, if (shuffle) queue.indices.random() else start)
+        navigateTo(AppDestination.NOW_PLAYING)
+    }
+
+    fun setKuwoQuality(value: String) = settingsRepository.setKuwoQuality(value)
 
     fun setAutoUpdateCheck(value: Boolean) {
         settingsRepository.setAutoUpdateCheck(value)
@@ -1677,6 +2286,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _albumRequest.value = null
     }
 
+    private val _composerRequest = MutableStateFlow<String?>(null)
+    val composerRequest: StateFlow<String?> = _composerRequest
+
+    fun openComposerOf(track: Track) {
+        val composer = track.composer?.trim().orEmpty()
+        if (composer.isEmpty()) {
+            message.value = "这首歌没有作曲人信息"
+            return
+        }
+        _composerRequest.value = composer
+        collapseNowPlaying()
+        navigateTo(AppDestination.LIBRARY)
+    }
+
+    fun consumeComposerRequest() {
+        _composerRequest.value = null
+    }
+
     fun deleteTracks(ids: Collection<String>) {
         if (ids.isEmpty()) return
         viewModelScope.launch {
@@ -1994,14 +2621,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _netease.value = _netease.value.copy(openPlaylist = playlist, songs = emptyList(), songsLoading = true, songsPartial = false, message = null, localMatches = emptyMap())
         neteaseJob?.cancel()
         neteaseJob = viewModelScope.launch {
+            val matched = HashMap<Long, String>()
             suspend fun show(songs: List<com.olbyine.music.data.NeteaseSong>, loading: Boolean, partial: Boolean = false) {
                 if (_netease.value.openPlaylist?.id != playlist.id) return
-                _netease.value = _netease.value.copy(songs = songs, songsLoading = loading, songsPartial = partial)
-                val matches = withContext(Dispatchers.Default) {
-                    matchSongs(songs.map { RemoteSong(it.id.toString(), it.title, it.artists, it.album, it.durationMs, it.coverUrl) }, library.tracks.value)
-                        .mapKeys { it.key.toLong() }
+                val fresh = songs.filter { it.id !in matched }
+                if (fresh.isNotEmpty()) {
+                    val more = withContext(Dispatchers.Default) {
+                        matchSongs(fresh.map { RemoteSong(it.id.toString(), it.title, it.artists, it.album, it.durationMs, it.coverUrl) }, library.tracks.value)
+                            .mapKeys { it.key.toLong() }
+                    }
+                    matched.putAll(more)
                 }
-                if (_netease.value.openPlaylist?.id == playlist.id) _netease.value = _netease.value.copy(localMatches = matches)
+                if (_netease.value.openPlaylist?.id != playlist.id) return
+                _netease.value = _netease.value.copy(
+                    songs = songs,
+                    songsLoading = loading,
+                    songsPartial = partial,
+                    localMatches = songs.mapNotNull { song -> matched[song.id]?.let { song.id to it } }.toMap(),
+                )
             }
             try {
                 val saved = if (cached) netease.cachedSongs(playlist.id) else null
@@ -2435,6 +3072,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateMetadata(track: Track, title: String, artist: String, album: String) {
         viewModelScope.launch { library.updateMetadata(track.id, title, artist, album) }
+    }
+
+    private var composerJob: Job? = null
+
+    fun startComposerEnrichment() {
+        if (composerJob?.isActive == true) return
+        composerJob = viewModelScope.launch {
+            library.composerScanDone.first { it }
+            val buffer = LinkedHashMap<String, Pair<String, String?>>()
+            val deferred = HashSet<String>()
+            while (isActive) {
+                if (!netease.signedIn) {
+                    delay(20_000)
+                    continue
+                }
+                val pending = library.tracks.value.filter { track -> track.composer == null && !track.isOnline }
+                if (pending.isEmpty()) {
+                    if (buffer.isNotEmpty()) {
+                        library.setComposers(buffer.toMap())
+                        buffer.clear()
+                    }
+                    delay(20_000)
+                    continue
+                }
+                var looked = 0
+                for (track in pending) {
+                    if (!netease.signedIn || !isActive) break
+                    if (track.id in deferred) continue
+                    val songId = runCatching { neteaseSongIdOf(track) }.getOrNull()
+                    val facts = if (songId != null && songId > 0) {
+                        withContext(Dispatchers.IO) { runCatching { netease.songFacts(songId) }.getOrNull() }.orEmpty()
+                    } else emptyList()
+                    if (songId != null && songId > 0 && facts.isEmpty()) {
+                        deferred += track.id
+                        continue
+                    }
+                    val credit = facts.firstOrNull { it.first == "作曲" }?.second?.takeIf(String::isNotBlank)?.trim().orEmpty()
+                    val label = facts.firstOrNull { it.first == "歌手" }?.second?.takeIf(String::isNotBlank)
+                        ?.substringBefore(" / ")?.trim()?.takeIf(String::isNotEmpty)
+                        ?: track.artist
+                    buffer[track.id] = label to credit
+                    looked++
+                    if (buffer.size >= 12) {
+                        library.setComposers(buffer.toMap())
+                        buffer.clear()
+                        delay(240)
+                    } else {
+                        delay(140)
+                    }
+                    if (looked % 60 == 0) delay(1_200)
+                }
+                if (buffer.isNotEmpty()) {
+                    library.setComposers(buffer.toMap())
+                    buffer.clear()
+                }
+                delay(5_000)
+            }
+        }
     }
 
     fun deleteTrack(track: Track) {

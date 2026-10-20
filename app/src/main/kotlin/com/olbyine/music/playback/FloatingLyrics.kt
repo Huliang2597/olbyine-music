@@ -72,7 +72,7 @@ internal class FloatingLyrics(private val context: Context, private val player: 
     private fun show() {
         val metrics = context.resources.displayMetrics
         val density = metrics.density
-        val width = prefs.getInt(KEY_WIDTH, (metrics.widthPixels - 32 * density).toInt())
+        val width = runCatching { prefs.getInt(KEY_WIDTH, (metrics.widthPixels - 32 * density).toInt()) }.getOrDefault((metrics.widthPixels - 32 * density).toInt())
             .coerceIn((200 * density).toInt(), metrics.widthPixels)
         val layout = WindowManager.LayoutParams(
             width,
@@ -83,12 +83,12 @@ internal class FloatingLyrics(private val context: Context, private val player: 
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
-            x = prefs.getInt(KEY_X, (16 * density).toInt())
-            y = prefs.getInt(KEY_Y, (metrics.heightPixels * .62f).toInt())
-            title = "Olbyine-X 桌面歌词"
+            x = runCatching { prefs.getInt(KEY_X, (16 * density).toInt()) }.getOrDefault((16 * density).toInt())
+            y = runCatching { prefs.getInt(KEY_Y, (metrics.heightPixels * .62f).toInt()) }.getOrDefault((metrics.heightPixels * .62f).toInt())
+            title = "Olbyine 桌面歌词"
         }
         val created = FloatingLyricsView(context, this)
-        created.scale = prefs.getFloat(KEY_SCALE, 1f)
+        created.scale = runCatching { prefs.getFloat(KEY_SCALE, 1f) }.getOrDefault(1f)
         if (runCatching { windows.addView(created, layout) }.isFailure) return
         view = created
         params = layout

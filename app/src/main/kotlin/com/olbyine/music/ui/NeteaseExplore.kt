@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Favorite
@@ -553,14 +554,37 @@ internal fun NeteaseSongRow(song: NeteaseSong, current: Boolean, onClick: () -> 
                     size = 40.dp, iconSize = 19.dp, tint = MaterialTheme.colorScheme.primary)
             }
         }
+        LocalPlayNextTrack.current?.let { next ->
+            GhostIconButton(Icons.AutoMirrored.Rounded.PlaylistPlay, "下一首播放", { next(song.toTrack()) }, size = 40.dp, iconSize = 19.dp,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (comments != null) {
             GhostIconButton(Icons.Rounded.ChatBubbleOutline, "评论", { comments(song.id, song.title) }, size = 40.dp, iconSize = 19.dp,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        val like = LocalNeteaseLike.current
+        if (like != null) {
+            val track = remember(song) { song.toTrack() }
+            HeartWithMenu(
+                track = { track },
+                liked = like.isLiked(song.id),
+                onToggle = { like.toggle(song.id) },
+                iconSize = 20.dp,
+                minSize = 40.dp,
+            )
         }
     }
 }
 
 internal val LocalNeteaseProfile = staticCompositionLocalOf<((Long) -> Unit)?> { null }
+
+/** 网易云曲目「喜欢」的状态与操作，由 OlbyineApp 统一提供。 */
+internal class NeteaseLikeActions(
+    val isLiked: (Long) -> Boolean,
+    val toggle: (Long) -> Unit,
+)
+
+internal val LocalNeteaseLike = staticCompositionLocalOf<NeteaseLikeActions?> { null }
 
 @Composable
 internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: String, onDismiss: () -> Unit) {

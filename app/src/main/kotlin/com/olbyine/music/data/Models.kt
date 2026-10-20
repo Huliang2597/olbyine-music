@@ -30,6 +30,8 @@ data class Track(
     val discNumber: Int = 0,
     val year: Int = 0,
     val albumArtist: String? = null,
+    val composer: String? = null,
+    val composerCredit: String? = null,
     val playCount: Int = 0,
     val lastPlayedAt: Long = 0L,
     val sampleRate: Int = 0,
@@ -40,7 +42,7 @@ data class Track(
     val hasLyrics: Boolean
         get() = lyricsInstrumental || storedLyrics || !lyrics.isNullOrBlank() || !wordLyrics.isNullOrBlank()
 
-    val isOnline: Boolean get() = uri.startsWith("ncm://") || uri.startsWith("sc://") || id.startsWith("nd:")
+    val isOnline: Boolean get() = uri.startsWith("ncm://") || uri.startsWith("sc://") || uri.startsWith("kw://") || id.startsWith("nd:")
 
     val albumOwner: String
         get() = albumArtist?.takeIf(String::isNotBlank)
@@ -184,6 +186,10 @@ data class UserSettings(
     val usbVolumeMode: UsbVolumeMode = UsbVolumeMode.HARDWARE,
     val usbMaxVolume: Int = 100,
     val neteaseOnline: Boolean = true,
+    val neteaseDownloadQuality: String = "exhigh",
+    val neteaseDownloadLyrics: Boolean = true,
+    val neteaseDownloadCover: Boolean = false,
+    val kuwoQuality: String = "320k",
     val autoUpdateCheck: Boolean = true,
     val neteaseQuality: String = "exhigh",
 )

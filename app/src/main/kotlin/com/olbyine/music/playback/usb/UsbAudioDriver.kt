@@ -72,7 +72,7 @@ object UsbAudioDriver {
     @Volatile var softwareGain: Float = 1f
         private set
 
-    val enabled: Boolean get() = initialized && preferences.getBoolean(PREF_KEY, false)
+    val enabled: Boolean get() = initialized && runCatching { preferences.getBoolean(PREF_KEY, false) }.getOrDefault(false)
 
     val isReady: Boolean
         @Synchronized get() = connection != null && topology != null &&
@@ -100,7 +100,7 @@ object UsbAudioDriver {
     }
 
     private val volumeMode: String get() = if (initialized) preferences.getString(PREF_VOLUME_MODE, null) ?: "HARDWARE" else "HARDWARE"
-    private val maxVolume: Int get() = if (initialized) preferences.getInt(PREF_MAX_VOLUME, 100).coerceIn(10, 100) else 100
+    private val maxVolume: Int get() = if (initialized) runCatching { preferences.getInt(PREF_MAX_VOLUME, 100) }.getOrDefault(100).coerceIn(10, 100) else 100
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -133,7 +133,7 @@ object UsbAudioDriver {
             addAction(ACTION_PERMISSION)
         }
         ContextCompat.registerReceiver(appContext, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        _state.value = _state.value.copy(volume = preferences.getInt(PREF_VOLUME, DEFAULT_VOLUME))
+        _state.value = _state.value.copy(volume = runCatching { preferences.getInt(PREF_VOLUME, DEFAULT_VOLUME) }.getOrDefault(DEFAULT_VOLUME))
         if (enabled) attach()
     }
 
@@ -279,8 +279,8 @@ object UsbAudioDriver {
             opened.fileDescriptor, alt.dataEndpoint, alt.maxPacket, packetsPerSecond, alt.subslot, alt.bits,
             alt.channels, deviceRate, rate, feedback, feedbackSize, if (highSpeed) 1 else 0,
             if (highSpeed) interval else 1,
-            preferences.getInt(PREF_BUFFER, 240).coerceIn(80, 1_000),
-            if (preferences.getBoolean(PREF_DITHER, true)) 1 else 0,
+            runCatching { preferences.getInt(PREF_BUFFER, 240) }.getOrDefault(240).coerceIn(80, 1_000),
+            if (runCatching { preferences.getBoolean(PREF_DITHER, true) }.getOrDefault(true)) 1 else 0,
         )
         if (handle == 0L) {
             publish(UsbDriverStatus.ERROR, detail = "USB 音频流启动失败")
@@ -347,7 +347,7 @@ object UsbAudioDriver {
         channels: Int,
         sourceBits: Int,
     ): Pair<UacAlt, Int>? {
-        val preferred = if (initialized) preferences.getInt(PREF_BIT_DEPTH, 0) else 0
+        val preferred = if (initialized) runCatching { preferences.getInt(PREF_BIT_DEPTH, 0) }.getOrDefault(0) else 0
         val wantBits = if (preferred in setOf(16, 24, 32)) preferred else sourceBits.coerceIn(16, 32)
         fun rank(alt: UacAlt) = (if (alt.channels == channels) 0 else if (alt.channels == 2) 1000 else 2000) +
             (if (alt.bits == wantBits) 0 else if (alt.bits >= wantBits) alt.bits - wantBits else 100 + wantBits - alt.bits)

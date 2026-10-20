@@ -21,7 +21,7 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VER="${TAG#v}"
-          APK="dist/Olbyine-X-${VER}-release.apk"
+          APK="dist/Olbyine-${VER}-release.apk"
           NOTES=".github/release-notes/${VER}.md"
           if [ ! -f "$APK" ]; then
             echo "missing $APK" >&2
@@ -31,7 +31,7 @@ jobs:
             gh release delete "$TAG" --yes --cleanup-tag=false
           fi
           if [ -f "$NOTES" ]; then
-            gh release create "$TAG" "$APK" --title "Olbyine-X ${VER}" --notes-file "$NOTES"
+            gh release create "$TAG" "$APK" --title "Olbyine ${VER}" --notes-file "$NOTES"
           else
-            gh release create "$TAG" "$APK" --title "Olbyine-X ${VER}" --generate-notes
+            gh release create "$TAG" "$APK" --title "Olbyine ${VER}" --generate-notes
           fi

@@ -108,7 +108,7 @@ internal class UsbBitPerfectAudio(context: Context) {
 
     private fun refresh() {
         if (!started) return
-        val enabled = preferences.getBoolean(SETTING_KEY, true)
+        val enabled = runCatching { preferences.getBoolean(SETTING_KEY, true) }.getOrDefault(true)
         val unmodifiedPlayback = player?.let {
             it.playbackParameters.speed == 1f && it.playbackParameters.pitch == 1f &&
                 it.volume == 1f && !it.skipSilenceEnabled

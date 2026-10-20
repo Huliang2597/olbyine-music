@@ -58,6 +58,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.automirrored.rounded.ViewList
@@ -84,6 +85,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Image
@@ -159,19 +161,21 @@ internal enum class LibrarySection(val label: String) {
     ALL("全部歌曲"),
     FAVORITES("收藏"),
     ALBUMS("专辑"),
+    COMPOSERS("作曲人"),
     FOLDERS("文件夹"),
     PLAYLISTS("歌单"),
 }
 
 @Stable
-internal class LibraryNav(section: LibrarySection, albumKey: String?) {
+internal class LibraryNav(section: LibrarySection, albumKey: String?, composerKey: String? = null) {
     var section by mutableStateOf(section)
     var albumKey by mutableStateOf(albumKey)
+    var composerKey by mutableStateOf(composerKey)
 
     companion object {
         val Saver = androidx.compose.runtime.saveable.listSaver<LibraryNav, String?>(
-            save = { listOf(it.section.name, it.albumKey) },
-            restore = { LibraryNav(LibrarySection.valueOf(it[0] ?: LibrarySection.ALL.name), it[1]) },
+            save = { listOf(it.section.name, it.albumKey, it.composerKey) },
+            restore = { LibraryNav(LibrarySection.valueOf(it[0] ?: LibrarySection.ALL.name), it.getOrNull(1), it.getOrNull(2)) },
         )
     }
 }
@@ -186,14 +190,20 @@ private data class LibraryPage(
     val folderId: String?,
     val playlistId: String?,
     val albumKey: String?,
+    val composerKey: String?,
 ) {
-    val drilledIn: Boolean get() = folderId != null || playlistId != null || albumKey != null
+    val drilledIn: Boolean get() = folderId != null || playlistId != null || albumKey != null || composerKey != null
 }
 
 private fun pageTracks(page: LibraryPage, state: MainUiState, albums: List<Album>, query: String): List<Track> {
     val source = when (page.section) {
         LibrarySection.ALL, LibrarySection.FAVORITES -> state.visibleTracks
         LibrarySection.ALBUMS -> albums.firstOrNull { it.key == page.albumKey }?.tracks?.filter { it.matches(query) }.orEmpty()
+        LibrarySection.COMPOSERS -> {
+            val key = page.composerKey
+            if (key == null) emptyList()
+            else state.tracks.filter { track -> track.composerNames().any { it.equals(key, ignoreCase = true) } && track.matches(query) }
+        }
         LibrarySection.FOLDERS -> state.tracks.filter { track ->
             val matchesFolder = if (page.folderId == "") track.folderId.isNullOrBlank() else track.folderId == page.folderId
             matchesFolder && track.matches(query)
@@ -205,7 +215,7 @@ private fun pageTracks(page: LibraryPage, state: MainUiState, albums: List<Album
         }
     }
     return when (page.section) {
-        LibrarySection.ALL, LibrarySection.FAVORITES, LibrarySection.PLAYLISTS, LibrarySection.ALBUMS -> source
+        LibrarySection.ALL, LibrarySection.FAVORITES, LibrarySection.PLAYLISTS, LibrarySection.ALBUMS, LibrarySection.COMPOSERS -> source
         LibrarySection.FOLDERS -> when (state.librarySortMode) {
             LibrarySortMode.TITLE, LibrarySortMode.TRACK_NUMBER, LibrarySortMode.ALBUM -> source.sortedWith(AlbumOrder)
             LibrarySortMode.RECENT -> source.sortedWith(compareByDescending<Track> { it.addedAt }.thenBy { it.id })
@@ -239,6 +249,7 @@ private class TrackCallbacks(
     val onAddToPlaylist: (String, String) -> Unit,
     val onRemoveFromPlaylist: (String, String) -> Unit,
     val onReorderPlaylistTracks: (String, List<String>) -> Unit,
+    val onPlayNext: (Track) -> Unit,
 )
 
 private class Selection {
@@ -261,6 +272,7 @@ internal fun LibraryScreen(
     onSearch: (String) -> Unit,
     onFilter: (LibraryFilter) -> Unit,
     onPlayTracks: (List<Track>, Int, com.olbyine.music.PlayOrigin?) -> Unit,
+    onPlayNext: (Track) -> Unit,
     onPlayInOrder: (List<Track>) -> Unit,
     onShufflePlay: (List<Track>) -> Unit,
     onFavorite: (Track) -> Unit,
@@ -288,6 +300,8 @@ internal fun LibraryScreen(
     onExternalLyrics: () -> Unit,
     albumRequest: String? = null,
     onAlbumRequestHandled: () -> Unit = {},
+    composerRequest: String? = null,
+    onComposerRequestHandled: () -> Unit = {},
     revealTrackId: com.olbyine.music.LibraryReveal? = null,
     onRevealHandled: () -> Unit = {},
     onPlayOrigin: (com.olbyine.music.PlayOrigin) -> Unit = {},
@@ -296,6 +310,7 @@ internal fun LibraryScreen(
 ) {
     var section by nav::section
     var albumKey by nav::albumKey
+    var composerKey by nav::composerKey
     LaunchedEffect(albumRequest) {
         val request = albumRequest ?: return@LaunchedEffect
         section = LibrarySection.ALBUMS
@@ -305,6 +320,16 @@ internal fun LibraryScreen(
         albumKey = request
         onAlbumRequestHandled()
     }
+    LaunchedEffect(composerRequest) {
+        val request = composerRequest?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        section = LibrarySection.COMPOSERS
+        albumKey = null
+        onFolder(null)
+        onPlaylist(null)
+        onFilter(LibraryFilter.ALL)
+        composerKey = request
+        onComposerRequestHandled()
+    }
     LaunchedEffect(revealTrackId, state.libraryLoaded) {
         val request = revealTrackId ?: return@LaunchedEffect
         val target = state.tracks.firstOrNull { it.id == request.trackId }
@@ -313,6 +338,7 @@ internal fun LibraryScreen(
             return@LaunchedEffect
         }
         albumKey = null
+        composerKey = null
         onFolder(null)
         onPlaylist(null)
         onFilter(LibraryFilter.ALL)
@@ -345,11 +371,14 @@ internal fun LibraryScreen(
     val selectedPlaylist = state.playlists.firstOrNull { it.id == state.activePlaylistId }
     val query = state.search.trim()
     val openAlbum = remember(albums, albumKey) { albums.firstOrNull { it.key == albumKey } }
+    val composers = remember(state.tracks) { buildComposers(state.tracks) }
+    val openComposer = remember(composers, composerKey) { composers.firstOrNull { it.name == composerKey } }
     val currentPage = LibraryPage(
         section = section,
         folderId = state.libraryFolderId.takeIf { section == LibrarySection.FOLDERS },
         playlistId = state.activePlaylistId.takeIf { section == LibrarySection.PLAYLISTS },
         albumKey = albumKey.takeIf { section == LibrarySection.ALBUMS && openAlbum != null },
+        composerKey = composerKey.takeIf { section == LibrarySection.COMPOSERS && openComposer != null },
     )
     val displayedTracks = remember(currentPage, state.tracks, state.visibleTracks, state.playlists, albums, query, state.librarySortMode, state.trackKeys) {
         pageTracks(currentPage, state, albums, query)
@@ -361,11 +390,13 @@ internal fun LibraryScreen(
     val folderOpen = section == LibrarySection.FOLDERS && state.libraryFolderId != null
     val playlistOpen = section == LibrarySection.PLAYLISTS && selectedPlaylist != null
     val albumOpen = section == LibrarySection.ALBUMS && openAlbum != null
+    val composerOpen = section == LibrarySection.COMPOSERS && openComposer != null
     val underPlayer = state.destination == AppDestination.NOW_PLAYING
     val currentOrigin: () -> com.olbyine.music.PlayOrigin = {
         when {
             playlistOpen && selectedPlaylist != null -> com.olbyine.music.PlayOrigin("playlist", selectedPlaylist.id, selectedPlaylist.name)
             albumOpen && openAlbum != null -> com.olbyine.music.PlayOrigin("album", openAlbum.key, openAlbum.title)
+            composerOpen && openComposer != null -> com.olbyine.music.PlayOrigin("composer", openComposer.name, openComposer.name)
             else -> com.olbyine.music.PlayOrigin("folder", currentPage.folderId ?: "")
         }
     }
@@ -380,22 +411,23 @@ internal fun LibraryScreen(
         onPlayOrigin(currentOrigin())
         onShufflePlay(tracks)
     }
-    androidx.compose.runtime.key(selection.active, searchOpen, folderOpen || playlistOpen || albumOpen, underPlayer) {
+    androidx.compose.runtime.key(selection.active, searchOpen, folderOpen || playlistOpen || albumOpen || composerOpen, underPlayer) {
         BackHandler(enabled = selection.active && !underPlayer) { selection.clear() }
         BackHandler(enabled = !selection.active && searchOpen && !underPlayer) {
             searchOpen = false
             onSearch("")
             focusManager.clearFocus()
         }
-        BackHandler(enabled = !selection.active && !searchOpen && (folderOpen || playlistOpen || albumOpen) && !underPlayer) {
+        BackHandler(enabled = !selection.active && !searchOpen && (folderOpen || playlistOpen || albumOpen || composerOpen) && !underPlayer) {
             when {
                 folderOpen -> onFolder(null)
                 playlistOpen -> onPlaylist(null)
+                composerOpen -> composerKey = null
                 else -> albumKey = null
             }
         }
     }
-    LaunchedEffect(section, state.libraryFolderId, state.activePlaylistId, albumKey) { selection.clear() }
+    LaunchedEffect(section, state.libraryFolderId, state.activePlaylistId, albumKey, composerKey) { selection.clear() }
 
     val callbacks = TrackCallbacks(
         playlists = state.playlists,
@@ -409,12 +441,14 @@ internal fun LibraryScreen(
         onAddToPlaylist = onAddToPlaylist,
         onRemoveFromPlaylist = onRemoveFromPlaylist,
         onReorderPlaylistTracks = onReorderPlaylistTracks,
+        onPlayNext = onPlayNext,
     )
-    val showsTracks = section == LibrarySection.ALL || section == LibrarySection.FAVORITES || folderOpen || playlistOpen || albumOpen
+    val showsTracks = section == LibrarySection.ALL || section == LibrarySection.FAVORITES || folderOpen || playlistOpen || albumOpen || composerOpen
     val selectSection: (LibrarySection) -> Unit = { item ->
         if (item != section) haptics.tick(HapticArea.MENUS)
         section = item
         albumKey = null
+        composerKey = null
         onFolder(null)
         onPlaylist(null)
         onFilter(if (item == LibrarySection.FAVORITES) LibraryFilter.FAVORITES else LibraryFilter.ALL)
@@ -442,7 +476,7 @@ internal fun LibraryScreen(
     }
     val overviewHeader = remember { floatArrayOf(0f, 0f) }
     var wasDrilled by remember { mutableStateOf(false) }
-    LaunchedEffect(section, state.libraryFolderId, state.activePlaylistId, albumKey, state.librarySortMode, state.libraryViewMode) {
+    LaunchedEffect(section, state.libraryFolderId, state.activePlaylistId, albumKey, composerKey, state.librarySortMode, state.libraryViewMode) {
         val drilled = currentPage.drilledIn
         when {
             drilled && !wasDrilled -> {
@@ -497,6 +531,8 @@ internal fun LibraryScreen(
                 val section = page.section
                 val openAlbum = remember(albums, page.albumKey) { albums.firstOrNull { it.key == page.albumKey } }
                 val albumOpen = section == LibrarySection.ALBUMS && openAlbum != null
+                val openComposer = remember(composers, page.composerKey) { composers.firstOrNull { it.name == page.composerKey } }
+                val composerOpen = section == LibrarySection.COMPOSERS && openComposer != null
                 val libraryFolderId = page.folderId
                 val folderOpen = section == LibrarySection.FOLDERS && libraryFolderId != null
                 val selectedPlaylist = state.playlists.firstOrNull { it.id == page.playlistId }
@@ -544,6 +580,13 @@ internal fun LibraryScreen(
                             )
                         }
                     }
+                    section == LibrarySection.COMPOSERS && openComposer == null -> ComposerGrid(
+                        composers = composers,
+                        query = query,
+                        onComposer = { composerKey = it.name },
+                        topContentPadding = topPadding,
+                        bottomContentPadding = bottomContentPadding,
+                    )
                     section == LibrarySection.FOLDERS && state.libraryFolderId == null -> FolderBrowser(
                         tracks = state.tracks,
                         query = query,
@@ -582,6 +625,22 @@ internal fun LibraryScreen(
                                         onPlay = { playAllFromList(displayedTracks) },
                                         onShuffle = { shuffleList(displayedTracks) },
                                         sortMode = null,
+                                        onSortMode = onSortMode,
+                                    )
+                                }
+                            }
+                            composerOpen && openComposer != null -> {
+                                {
+                                    CollectionHeader(
+                                        title = openComposer.name,
+                                        subtitle = openComposer.credit?.let { "${openComposer.tracks.size} 首 · 作曲 $it" } ?: "${openComposer.tracks.size} 首 · 作曲",
+                                        cover = { CoverMosaic(openComposer.tracks.take(4), Modifier.size(112.dp), 18.dp, openComposer.name) },
+                                        onBack = { composerKey = null },
+                                        tracks = displayedTracks,
+                                        onFanCard = { track -> playFromList(displayedTracks, displayedTracks.indexOf(track).coerceAtLeast(0)) },
+                                        onPlay = { playAllFromList(displayedTracks) },
+                                        onShuffle = { shuffleList(displayedTracks) },
+                                        sortMode = state.librarySortMode,
                                         onSortMode = onSortMode,
                                     )
                                 }
@@ -666,7 +725,7 @@ internal fun LibraryScreen(
                                 }
                             }
                         }
-                        if (state.libraryViewMode == LibraryViewMode.TILES && !albumOpen && displayedTracks.isNotEmpty()) {
+                        if (state.libraryViewMode == LibraryViewMode.TILES && !albumOpen && !composerOpen && displayedTracks.isNotEmpty()) {
                             val currentId = state.currentTrack?.id
                             val wallItems = remember(displayedTracks, currentId) {
                                 displayedTracks.map { WallItem(it.id, it.title, it.artist, it, it.id == currentId) }
@@ -684,7 +743,7 @@ internal fun LibraryScreen(
                         } else TrackCollection(
                             tracks = displayedTracks,
                             keys = state.trackKeys,
-                            viewMode = if (albumOpen || state.libraryViewMode == LibraryViewMode.TILES) LibraryViewMode.LIST else state.libraryViewMode,
+                            viewMode = if (albumOpen || composerOpen || state.libraryViewMode == LibraryViewMode.TILES) LibraryViewMode.LIST else state.libraryViewMode,
                             sortMode = state.librarySortMode,
                             indexEnabled = section == LibrarySection.ALL || section == LibrarySection.FAVORITES,
                             albumStyle = albumOpen,
@@ -770,6 +829,7 @@ internal fun LibraryScreen(
                                 section = section,
                                 count = when {
                                     section == LibrarySection.ALBUMS && !albumOpen -> albums.size
+                                    section == LibrarySection.COMPOSERS && !composerOpen -> composers.size
                                     section == LibrarySection.PLAYLISTS && !playlistOpen -> state.playlists.size
                                     else -> displayedTracks.size
                                 },
@@ -917,7 +977,7 @@ private fun TitleHeader(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "${section.label} · $count ${if (section == LibrarySection.ALBUMS) "张" else if (section == LibrarySection.PLAYLISTS) "个" else "首"}",
+                    "${section.label} · $count ${when (section) { LibrarySection.ALBUMS -> "张"; LibrarySection.COMPOSERS, LibrarySection.PLAYLISTS -> "个"; else -> "首" }}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -942,6 +1002,7 @@ private fun TitleHeader(
                                 LibrarySection.ALL -> Icons.Rounded.MusicNote
                                 LibrarySection.FAVORITES -> Icons.Rounded.Favorite
                                 LibrarySection.ALBUMS -> Icons.Rounded.Album
+                                LibrarySection.COMPOSERS -> Icons.Rounded.EditNote
                                 LibrarySection.FOLDERS -> Icons.Rounded.FolderOpen
                                 LibrarySection.PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic
                             },
@@ -1111,6 +1172,93 @@ private fun AddMenu(
             GlassMenuItem("导入网易云 / Spotify 歌单", { expanded = false; onImportNetease() }, icon = Icons.Rounded.CloudDownload)
             MenuDivider()
             GlassMenuItem("监听其他播放器", { expanded = false; onExternalLyrics() }, icon = Icons.Rounded.Headphones)
+        }
+    }
+}
+
+internal data class ComposerGroup(val name: String, val tracks: List<Track>, val credit: String? = null)
+
+internal fun Track.composerNames(): List<String> =
+    if (composerCredit != null) listOfNotNull(composer?.trim()?.takeIf(String::isNotEmpty))
+    else com.olbyine.music.data.ComposerTags.split(composer)
+
+internal fun buildComposers(tracks: List<Track>): List<ComposerGroup> {
+    val spellings = LinkedHashMap<String, MutableMap<String, Int>>()
+    val members = LinkedHashMap<String, MutableList<Track>>()
+    tracks.forEach { track ->
+        track.composerNames().forEach { name ->
+            val key = com.olbyine.music.data.ComposerTags.normalize(name)
+            if (key.isEmpty()) return@forEach
+            val counts = spellings.getOrPut(key) { LinkedHashMap() }
+            counts[name] = (counts[name] ?: 0) + 1
+            val list = members.getOrPut(key) { mutableListOf() }
+            if (list.none { it.id == track.id }) list.add(track)
+        }
+    }
+    return members.map { (key, list) ->
+        val display = spellings[key].orEmpty().maxByOrNull { it.value }?.key.orEmpty()
+        val credit = list.asSequence()
+            .mapNotNull { it.composerCredit?.trim()?.takeIf(String::isNotEmpty) }
+            .groupingBy { it }
+            .eachCount()
+            .maxByOrNull { it.value }
+            ?.key
+            ?.takeIf { !it.equals(display, ignoreCase = true) }
+        ComposerGroup(display, list.sortedWith(AlbumOrder), credit)
+    }.filter { it.name.isNotBlank() && it.tracks.isNotEmpty() }
+        .sortedBy { it.name.lowercase() }
+}
+
+@Composable
+private fun ComposerGrid(
+    composers: List<ComposerGroup>,
+    query: String,
+    onComposer: (ComposerGroup) -> Unit,
+    topContentPadding: Dp,
+    bottomContentPadding: Dp,
+) {
+    val visible = remember(composers, query) {
+        if (query.isBlank()) composers
+        else composers.filter { it.name.contains(query, true) || it.tracks.any { track -> track.title.contains(query, true) } }
+    }
+    if (visible.isEmpty()) {
+        EmptyState(
+            Icons.Rounded.EditNote,
+            if (query.isBlank()) "还没有作曲人信息" else "没有匹配的作曲人",
+            modifier = Modifier.fillMaxSize().padding(top = topContentPadding, bottom = bottomContentPadding),
+            message = if (query.isBlank()) "会先读歌曲文件里的作曲人标签，没有的再由网易云逐步补全" else null,
+        )
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(150.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = topContentPadding + 4.dp, bottom = bottomContentPadding + 20.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        gridItems(visible, key = { it.name }) { composer ->
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { onComposer(composer) }.padding(6.dp),
+            ) {
+                Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
+                    CoverMosaic(composer.tracks.take(4), Modifier.fillMaxSize(), 16.dp, composer.name)
+                }
+                Text(
+                    composer.name,
+                    Modifier.padding(start = 2.dp, top = 8.dp),
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${composer.tracks.size} 首",
+                    Modifier.padding(start = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }
@@ -1444,6 +1592,15 @@ private fun AlbumTrackRow(
             style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .8f),
         )
+        if (!selecting) {
+            HeartWithMenu(
+                track = { track },
+                liked = track.favorite,
+                onToggle = { callbacks.onFavorite(track) },
+                iconSize = 20.dp,
+                minSize = 38.dp,
+            )
+        }
         SelectingSwap(selecting, 12.dp) { TrackActions(track, callbacks) }
     }
 }
@@ -1704,6 +1861,16 @@ private fun TrackRow(
             style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .8f),
         )
+        if (!selecting) {
+            GhostIconButton(
+                Icons.AutoMirrored.Rounded.PlaylistPlay,
+                "下一首播放",
+                { callbacks.onPlayNext(track) },
+                size = 36.dp,
+                iconSize = 18.dp,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         SelectingSwap(selecting, 14.dp) { TrackActions(track, callbacks) }
     }
 }

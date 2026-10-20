@@ -13,6 +13,6 @@ dependencyResolutionManagement {
         maven { url 'https://jitpack.io' }
     }
 }
-rootProject.name = "Olbyine-X"
+rootProject.name = "Olbyine"
 include(":app")
 include(":alac-decoder")

@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 class LyricsHub(
     private val library: MusicLibraryRepository,
     private val netease: NeteaseClient,
+    private val kuwo: KuwoClient,
     scope: CoroutineScope,
 ) {
     private val currentId = MutableStateFlow<String?>(null)
@@ -47,6 +48,14 @@ class LyricsHub(
             onlineCache.get(id)?.let { return it }
             val songId = id.removePrefix("ncm:").toLongOrNull() ?: return LyricsDocument.Empty.copy(trackId = id)
             val stored = runCatching { netease.lyrics(songId) }.getOrNull() ?: return LyricsDocument.Empty.copy(trackId = id)
+            return withContext(Dispatchers.Default) {
+                parse(stored.lyrics, stored.wordLyrics, stored.translationLyrics, stored.romanLyrics, id)
+            }.also { onlineCache.put(id, it) }
+        }
+        if (id.startsWith("kw:")) {
+            onlineCache.get(id)?.let { return it }
+            val songId = id.removePrefix("kw:").toLongOrNull() ?: return LyricsDocument.Empty.copy(trackId = id)
+            val stored = runCatching { kuwo.lyrics(songId) }.getOrNull() ?: return LyricsDocument.Empty.copy(trackId = id)
             return withContext(Dispatchers.Default) {
                 parse(stored.lyrics, stored.wordLyrics, stored.translationLyrics, stored.romanLyrics, id)
             }.also { onlineCache.put(id, it) }

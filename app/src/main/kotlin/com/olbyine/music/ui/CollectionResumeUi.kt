@@ -25,6 +25,14 @@ import androidx.compose.ui.unit.dp
 import com.olbyine.music.CollectionResumePoint
 import com.olbyine.music.data.NeteaseSong
 
+internal val LocalPlayNextTrack = staticCompositionLocalOf<((com.olbyine.music.data.Track) -> Unit)?> { null }
+
+internal val LocalNeteaseDownload = staticCompositionLocalOf<((com.olbyine.music.data.NeteaseSong) -> Unit)?> { null }
+
+internal val LocalDownloadTrack = staticCompositionLocalOf<((com.olbyine.music.data.Track) -> Unit)?> { null }
+
+internal val LocalNeteaseDownloads = staticCompositionLocalOf<Map<Long, com.olbyine.music.NeteaseDownloadState>> { emptyMap() }
+
 internal val LocalCollectionResume = staticCompositionLocalOf<((String) -> CollectionResumePoint?)?> { null }
 
 internal val LocalResumeCollection = staticCompositionLocalOf<((String, List<NeteaseSong>) -> Unit)?> { null }

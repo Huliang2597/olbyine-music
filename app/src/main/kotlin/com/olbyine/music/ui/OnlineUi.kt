@@ -43,10 +43,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.FileDownload
+import androidx.compose.material.icons.rounded.FileDownloadDone
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -556,6 +559,34 @@ private fun NeteasePlaylistPage(
                     GhostIconButton(Icons.Rounded.ChatBubbleOutline, "评论", { openComments(song.id, song.title) }, size = 40.dp, iconSize = 19.dp,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                LocalPlayNextTrack.current?.let { next ->
+                    GhostIconButton(
+                        Icons.AutoMirrored.Rounded.PlaylistPlay,
+                        "下一首播放",
+                        { haptics.tick(HapticArea.MENUS); next(song.toTrack()) },
+                        size = 40.dp,
+                        iconSize = 19.dp,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                val download = LocalNeteaseDownload.current
+                val downloadState = LocalNeteaseDownloads.current[song.id]
+                when {
+                    downloadState?.done == true -> StyledIcon(
+                        Icons.Rounded.FileDownloadDone, "已下载", Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    downloadState != null && !downloadState.failed -> Box(
+                        Modifier.size(40.dp), contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            progress = { if (downloadState.progress > 0f) downloadState.progress else 0.05f },
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                    else -> Unit
+                }
                 val liked = song.id in state.liked
                 val openArtist = LocalOpenArtist.current
                 val openLink = LocalNeteaseLinks.current
@@ -572,6 +603,7 @@ private fun NeteasePlaylistPage(
                     onOpenAlbum = if (openLink != null && song.albumId > 0) ({
                         openLink(com.olbyine.music.data.NeteaseTarget.Album(song.albumId))
                     }) else null,
+                    onDownload = download?.let { trigger -> ({ trigger(song) }) },
                 )
             }
         }

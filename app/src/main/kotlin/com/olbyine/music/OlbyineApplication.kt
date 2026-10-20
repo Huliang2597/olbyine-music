@@ -33,6 +33,15 @@ class OlbyineApplication : Application() {
     val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
     val spotify: SpotifyRepository by lazy { SpotifyRepository(this) }
     val updateChecker by lazy { com.olbyine.music.data.UpdateChecker() }
+    val neteaseDownloader by lazy { com.olbyine.music.data.NeteaseDownloader(this) }
+    val downloadRecords by lazy { com.olbyine.music.data.DownloadRecords(this) }
+    val downloadNotifier by lazy { com.olbyine.music.data.DownloadNotifier(this) }
+    val backup by lazy { com.olbyine.music.data.BackupRepository(this) }
+    val kuwo: com.olbyine.music.data.KuwoClient by lazy { com.olbyine.music.data.KuwoClient(this) }
+    val lxScripts by lazy { com.olbyine.music.data.LxScriptStore(this) }
+    val lxPlaylists by lazy { com.olbyine.music.data.LxPlaylistStore(this) }
+    val lxHttp by lazy { com.olbyine.music.data.LxHttp(this) }
+    val lxRunner by lazy { com.olbyine.music.data.LxScriptRunner(this) }
 
     @get:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     val motionCache: androidx.media3.datasource.cache.SimpleCache by lazy {
@@ -52,7 +61,7 @@ class OlbyineApplication : Application() {
         playback = PlaybackConnection(this)
         onlineMetadata = OnlineMetadataRepository(this, appleMusic)
         netease = com.olbyine.music.data.NeteaseClient(this)
-        lyricsHub = com.olbyine.music.data.LyricsHub(musicLibrary, netease, appScope)
+        lyricsHub = com.olbyine.music.data.LyricsHub(musicLibrary, netease, kuwo, appScope)
         webDav = com.olbyine.music.data.WebDavRepository(this)
         musicLibrary.remoteHeaders = webDav::headersFor
         com.olbyine.music.playback.usb.UsbAudioDriver.init(this)

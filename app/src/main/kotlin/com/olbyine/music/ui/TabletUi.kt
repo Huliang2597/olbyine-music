@@ -23,8 +23,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Settings
@@ -116,6 +118,7 @@ internal fun TabletSidebar(
         SidebarEntry(LibrarySection.ALL.name, "全部歌曲", Icons.Rounded.MusicNote),
         SidebarEntry(LibrarySection.FAVORITES.name, if (favoriteCount > 0 && !layout.compactRail) "收藏 · $favoriteCount" else "收藏", Icons.Rounded.Favorite),
         SidebarEntry(LibrarySection.ALBUMS.name, "专辑", Icons.Rounded.Album),
+        SidebarEntry(LibrarySection.COMPOSERS.name, "作曲人", Icons.Rounded.EditNote),
         SidebarEntry(LibrarySection.FOLDERS.name, "文件夹", Icons.Rounded.FolderOpen),
         SidebarEntry(LibrarySection.PLAYLISTS.name, "歌单", Icons.AutoMirrored.Rounded.QueueMusic),
     )
@@ -142,6 +145,7 @@ internal fun TabletSidebar(
                 }
                 Spacer(Modifier.height(6.dp))
                 RailItem(Icons.Rounded.Cloud, "网易云", destination == AppDestination.ONLINE && streamingProvider == "netease", click { onStreaming("netease") })
+                RailItem(Icons.Rounded.QueueMusic, "洛雪", destination == AppDestination.ONLINE && streamingProvider == "kuwo", click { onStreaming("kuwo") })
                 RailItem(Icons.Rounded.Waves, "SoundCloud", destination == AppDestination.ONLINE && streamingProvider == "soundcloud", click { onStreaming("soundcloud") })
                 RailItem(Icons.Rounded.Storage, "Navidrome", destination == AppDestination.ONLINE && streamingProvider == "navidrome", click { onStreaming("navidrome") })
                 RailItem(Icons.Rounded.Dns, "WebDAV", false, click(onWebDav))
@@ -151,7 +155,7 @@ internal fun TabletSidebar(
         } else {
             Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
                 Text(
-                    "Olbyine-X",
+                    "Olbyine",
                     Modifier.padding(start = 10.dp, top = 18.dp, bottom = 10.dp),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
@@ -162,6 +166,7 @@ internal fun TabletSidebar(
                 }
                 SidebarLabel("在线")
                 SidebarItem(Icons.Rounded.Cloud, "网易云音乐", destination == AppDestination.ONLINE && streamingProvider == "netease", click { onStreaming("netease") })
+                SidebarItem(Icons.AutoMirrored.Rounded.QueueMusic, "洛雪音乐", destination == AppDestination.ONLINE && streamingProvider == "kuwo", click { onStreaming("kuwo") })
                 SidebarItem(Icons.Rounded.Waves, "SoundCloud", destination == AppDestination.ONLINE && streamingProvider == "soundcloud", click { onStreaming("soundcloud") })
                 SidebarItem(Icons.Rounded.Storage, "Navidrome", destination == AppDestination.ONLINE && streamingProvider == "navidrome", click { onStreaming("navidrome") })
                 SidebarItem(Icons.Rounded.Dns, "WebDAV 与 NAS", false, click(onWebDav))

@@ -813,7 +813,7 @@ class NeteaseClient(context: Context) {
     fun collectionStream(target: NeteasePlaylistSummary): Flow<NeteaseCollection> = flow {
         when (target.kind) {
             NeteaseCollectionKind.PLAYLIST, NeteaseCollectionKind.CHART -> {
-                val detail = eapi("/api/v6/playlist/detail", JSONObject().put("id", target.id.toString()).put("n", "100000").put("s", "8"))
+                val detail = eapi("/api/v6/playlist/detail", JSONObject().put("id", target.id.toString()).put("n", "0").put("s", "8"))
                 val playlist = detail.optJSONObject("playlist") ?: error(detail.optString("message").ifBlank { "歌单不可用" })
                 val creator = playlist.optJSONObject("creator")
                 val summary = playlistSummary(playlist).copy(kind = target.kind, liked = playlist.optInt("specialType") == 5)
@@ -902,7 +902,7 @@ class NeteaseClient(context: Context) {
         }
     }
 
-    private fun readUntil(userId: Long): Long = preferences.getLong("read_$userId", 0L)
+    private fun readUntil(userId: Long): Long = runCatching { preferences.getLong("read_$userId", 0L) }.getOrDefault(0L)
 
     fun markThreadRead(userId: Long, time: Long = System.currentTimeMillis()) {
         if (userId > 0) preferences.edit().putLong("read_$userId", maxOf(time, readUntil(userId))).apply()
@@ -1234,6 +1234,78 @@ class NeteaseClient(context: Context) {
         return url.https() ?: url
     }
 
+    suspend fun downloadInfo(id: Long, level: String): NeteaseDownloadInfo = withContext(Dispatchers.IO) {
+        val params = JSONObject()
+            .put("ids", "[$id]")
+            .put("level", level)
+            .put("encodeType", "flac")
+            .put("immerseType", "c51")
+            .put("trialMode", "-1")
+        var result = runCatching { api("/api/song/enhance/player/url/v1", JSONObject(params.toString())) }
+            .getOrElse { error("获取下载地址失败：${it.message ?: "网络不可用"}") }
+        var row = firstDataRow(result)
+        if (row == null) {
+            val legacy = runCatching {
+                api(
+                    "/api/song/enhance/player/url",
+                    JSONObject().put("ids", "[$id]").put("br", legacyBitrate(level).toString()),
+                )
+            }.getOrNull()
+            if (legacy != null) {
+                result = legacy
+                row = firstDataRow(legacy)
+            }
+        }
+        val data = row ?: error(
+            when (result.optInt("code", 200)) {
+                200 -> "网易云没有返回下载地址"
+                -460 -> "网易云拒绝了请求（风控），请稍后再试或重新登录"
+                else -> result.optString("message").ifBlank { "网易云没有返回下载地址（code ${result.optInt("code")}）" }
+            },
+        )
+        val url = data.optString("url").takeIf { it.isNotBlank() && it != "null" }
+        if (url == null) {
+            error(
+                when {
+                    data.optInt("fee") == 1 || data.optInt("fee") == 4 -> "这首歌需要网易云会员或单独购买"
+                    cookie == null -> "需要登录网易云才能下载"
+                    else -> "网易云暂时无法下载这首歌（版权限制）"
+                },
+            )
+        }
+        if (data.optJSONObject("freeTrialInfo") != null) error("这首歌只能试听（需要会员），无法完整下载")
+        NeteaseDownloadInfo(
+            url = url.https() ?: url,
+            type = data.optString("type").takeIf { it.isNotBlank() && it != "null" }.orEmpty(),
+            sizeBytes = data.optLong("size"),
+            bitrate = data.optInt("br"),
+            level = data.optString("level").ifBlank { level },
+            coverUrl = (runCatching { song(id) }.getOrNull()?.coverUrl ?: "").let { if (it.startsWith("http")) "$it?param=500y500" else it },
+        )
+    }
+
+    private fun legacyBitrate(level: String): Int = when (level) {
+        "standard" -> 128_000
+        "higher" -> 192_000
+        "exhigh" -> 320_000
+        "lossless" -> 999_000
+        "hires", "jymaster" -> 1_900_000
+        else -> 320_000
+    }
+
+    private fun firstDataRow(result: JSONObject): JSONObject? {
+        val data = result.opt("data")
+        return when (data) {
+            is JSONObject -> data
+            is JSONArray -> (0 until data.length()).mapNotNull { data.optJSONObject(it) }.firstOrNull()
+            is String -> runCatching {
+                val text = data.trim()
+                if (text.startsWith("[")) JSONArray(text).optJSONObject(0) else JSONObject(text)
+            }.getOrNull()
+            else -> result.optJSONArray("songs")?.optJSONObject(0)
+        }
+    }
+
     suspend fun lyrics(id: Long): StoredLyrics? = withContext(Dispatchers.IO) {
         val result = eapi(
             "/api/song/lyric/v1",
@@ -1357,8 +1429,8 @@ class NeteaseClient(context: Context) {
     private fun String.https(): String? = takeIf { it.isNotBlank() && it != "null" }?.replace(Regex("^http://", RegexOption.IGNORE_CASE), "https://")
 
     companion object {
-        private const val FIRST_BATCH = 80
-        private const val REST_CHUNK = 400
+        private const val FIRST_BATCH = 60
+        private const val REST_CHUNK = 200
         private const val KEY_MUSIC_U = "music_u"
         private const val KEY_ACCOUNT = "account"
         private const val KEY_DEVICE = "device_id"

@@ -25,7 +25,7 @@ class UpdateChecker {
         val request = Request.Builder()
             .url("https://api.github.com/repos/$REPO/releases/latest")
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "Olbyine-X/${BuildConfig.VERSION_NAME}")
+            .header("User-Agent", "Olbyine/${BuildConfig.VERSION_NAME}")
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@withContext null
@@ -56,7 +56,7 @@ class UpdateChecker {
     }
 
     companion object {
-        const val REPO = "YeisuQwQ/Olbyine-X"
+        const val REPO = "Huliang2597/olbyine-music"
 
         fun isNewer(candidate: String, current: String): Boolean {
             val left = parts(candidate)
