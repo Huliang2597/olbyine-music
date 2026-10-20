@@ -2,10 +2,6 @@
 
 Olbyine 是一个 Android 本地与流媒体音乐播放器，使用 Kotlin、Jetpack Compose 和 AndroidX Media3 构建。
 
-> **关于本项目**：Olbyine 基于 [Olbyine Music](https://github.com/Huliang2597/olbyine-music) 继续维护，沿用 Olbyine 这个名称。
-> 上游项目的全部功能、架构与代码基础都来自 Olbyine Music，本分支在此基础上继续维护与调整，上游若继续更新会按需同步。
-> 遇到的问题请先确认是否在本分支上出现，再决定反馈给上游还是这里。
-
 ## 功能
 
 - 本地音乐库：文件夹扫描、专辑（网格 / Cover Flow / 球形）、歌单、收藏、字母索引、WAV / AIFF / ALAC 等格式
@@ -35,19 +31,6 @@ pnpm run build
 ```
 
 USB 音频引擎的原生库源码位于 `app/src/main/cpp/`，预编译产物在 `app/src/main/jniLibs/`。
-
-### 签名
-
-源码不包含签名密钥。要构建签名后的 release 包，在仓库根目录放一个 `keystore.properties`（已被 `.gitignore` 忽略）：
-
-```properties
-storeFile=keystore/olbyine-x-release.jks
-storePassword=你的密码
-keyAlias=olbyine-x
-keyPassword=你的密码
-```
-
-没有该文件时 `assembleRelease` 会回退到 debug 签名。
 
 ## 许可
 
