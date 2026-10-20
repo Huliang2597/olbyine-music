@@ -121,7 +121,7 @@
         <receiver
             android:name=".playback.LyricsWidgetProvider"
             android:exported="true"
-            android:label="Olbyine 歌词">
+            android:label="Olbyine-X 歌词">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

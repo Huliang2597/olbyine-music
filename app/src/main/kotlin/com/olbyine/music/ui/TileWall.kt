@@ -142,6 +142,8 @@ internal fun TileWall(
     topContentPadding: Dp,
     bottomContentPadding: Dp,
     header: (@Composable () -> Unit)? = null,
+    revealIndex: Int? = null,
+    onRevealed: () -> Unit = {},
 ) {
     val density = LocalDensity.current
     val scroll = androidx.compose.foundation.rememberScrollState()
@@ -164,6 +166,15 @@ internal fun TileWall(
         var headerPx by remember { mutableIntStateOf(0) }
         val leadPx = with(density) { (if (horizontal) 4.dp else topContentPadding + 4.dp).toPx() } + if (horizontal) 0 else headerPx
         val viewportPx = with(density) { (if (horizontal) maxWidth else maxHeight).toPx() }
+        var handledReveal by remember { mutableStateOf<Int?>(null) }
+        LaunchedEffect(revealIndex, tiles, cellPx, leadPx) {
+            val target = revealIndex ?: return@LaunchedEffect
+            if (handledReveal == target) return@LaunchedEffect
+            val tile = tiles.firstOrNull { it.index == target } ?: return@LaunchedEffect
+            handledReveal = target
+            scroll.scrollTo((leadPx + tile.main * cellPx - cellPx * .5f).coerceAtLeast(0f).toInt())
+            onRevealed()
+        }
         val window by remember(cellPx, viewportPx, leadPx) {
             derivedStateOf {
                 val first = ((scroll.value - leadPx) / cellPx).toInt() - 3

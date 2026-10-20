@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Olbyine Music</string>
+    <string name="app_name">Olbyine-X</string>
     <string name="widget_description">正在播放的歌曲、逐字歌词与播放控制</string>
-    <string name="widget_idle_title">Olbyine Music</string>
+    <string name="widget_idle_title">Olbyine-X</string>
     <string name="widget_idle_subtitle">点按打开，挑一首歌</string>
     <string name="widget_previous">上一首</string>
     <string name="widget_toggle">播放或暂停</string>

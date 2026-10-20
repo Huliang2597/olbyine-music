@@ -181,7 +181,7 @@ import kotlin.math.sqrt
 private enum class SettingsPage(val title: String, val subtitle: String, val icon: ImageVector) {
     APPEARANCE("外观与风格", "界面风格、主题、玻璃材质、背景与应用图标", Icons.Rounded.Palette),
     PLAYER("播放页", "动态封面、律动背景、玻璃按钮", Icons.Rounded.PlayCircle),
-    LYRICS("歌词", "字号字重、时间偏移、自动匹配", Icons.Rounded.Lyrics),
+    LYRICS("歌词", "字号字重、时间偏移、高亮位置、自动匹配", Icons.Rounded.Lyrics),
     LYRIC_OUTPUT("歌词外显", "通知栏、状态栏、桌面小组件与车载歌词", Icons.Rounded.Notifications),
     TRANSITION("歌曲过渡", "像 Apple Music 一样自动衔接下一首", Icons.Rounded.SwapHoriz),
     AUDIO("音频输出", "输出模式、USB 独占驱动与位完美", Icons.Rounded.Usb),
@@ -250,7 +250,7 @@ internal fun SettingsScreen(
                     SettingsPage.LIBRARY -> LibrarySettingsPage(state, viewModel)
                     SettingsPage.ONLINE -> OnlineSettingsPage(state, viewModel, onExternalLyrics, onNeteaseLogin)
                     SettingsPage.HAPTICS -> HapticsPage(state, viewModel)
-                    SettingsPage.ABOUT -> AboutPage()
+                    SettingsPage.ABOUT -> AboutPage(state, viewModel)
                 }
             }
         }
@@ -269,7 +269,7 @@ private fun SettingsHome(state: MainUiState, bottomContentPadding: Dp, scroll: a
                 .verticalScroll(scroll)
                 .padding(bottom = bottomContentPadding + 28.dp),
         ) {
-            ScreenHeader("设置", "Olbyine ${BuildConfig.VERSION_NAME}")
+            ScreenHeader("设置", "Olbyine-X ${BuildConfig.VERSION_NAME}")
             StyleCard(state) { onOpen(SettingsPage.APPEARANCE) }
             val compact = LocalStyleSpec.current.style == UiStyle.IOS
             SettingsSections.forEach { (title, pages) ->
@@ -486,6 +486,7 @@ private fun LyricsSettingsPage(state: MainUiState, viewModel: MainViewModel, onI
         }
         SliderRow("未播放行透明度", { "${(it * 100).roundToInt()}%" }, settings.lyricInactiveOpacity, 0.16f..0.72f, onValue = viewModel::setLyricOpacity)
         OffsetRow(settings.lyricOffsetMs, viewModel::setLyricOffset)
+        AlignRow(settings.lyricAlignPosition, viewModel::setLyricAlignPosition)
         GroupDivider()
         SettingSwitch(Icons.Rounded.BlurOn, "歌词景深模糊", "非当前行逐渐模糊，像 Apple Music 一样（更耗电，逐字歌词可能更卡）",
             settings.lyricBlur, viewModel::setLyricBlur)
@@ -908,13 +909,37 @@ private val Credits = listOf(
 )
 
 @Composable
-private fun AboutPage() {
+private fun AboutPage(state: MainUiState, viewModel: MainViewModel) {
     var licensesVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val update by viewModel.appUpdate.collectAsState()
+    val checking by viewModel.updateChecking.collectAsState()
+    val haptics = rememberHaptics()
     SettingsGroup("") {
         AboutRow()
         GroupDivider()
         LinkRow(Icons.Rounded.Gavel, "开源许可", "本应用内置 AMLL 修改版，整体以 AGPL-3.0 提供") { licensesVisible = true }
+    }
+    SettingsGroup("更新") {
+        SettingSwitch(
+            Icons.Rounded.Refresh,
+            "自动检测更新",
+            "每次启动时检查 GitHub Releases 是否有新版本",
+            state.settings.autoUpdateCheck,
+        ) { viewModel.setAutoUpdateCheck(it) }
+        GroupDivider()
+        LinkRow(
+            Icons.Rounded.CloudSync,
+            "检查更新",
+            when {
+                checking -> "正在检查…"
+                update != null -> "发现新版本 ${update?.version}"
+                else -> "当前版本 ${BuildConfig.VERSION_NAME}"
+            },
+        ) {
+            haptics.light(HapticArea.MENUS)
+            viewModel.checkForUpdates(manual = true)
+        }
     }
     SettingsGroup("开源项目与致谢") {
         Credits.forEachIndexed { index, credit ->
@@ -1050,7 +1075,7 @@ private fun StyleCard(state: MainUiState, onClick: () -> Unit) {
         ) { StyledIcon(Icons.Rounded.MusicNote, null, Modifier.size(28.dp), tint = if (spec.style == UiStyle.IOS) Color.White else colors.onPrimary) }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text("Olbyine", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("Olbyine-X", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(
                 "${state.settings.uiStyle.label} 风格 · " + when (state.settings.themeMode) {
                     com.olbyine.music.data.ThemeMode.DARK -> "深色"
@@ -1354,7 +1379,7 @@ private fun pinCustomShortcut(context: android.content.Context, uri: android.net
         val square = android.graphics.Bitmap.createBitmap(decoded, (decoded.width - side) / 2, (decoded.height - side) / 2, side, side)
         val icon = android.graphics.Bitmap.createScaledBitmap(square, 432, 432, true)
         val info = ShortcutInfo.Builder(context, "olbyine-custom-${System.currentTimeMillis()}")
-            .setShortLabel("Olbyine")
+            .setShortLabel("Olbyine-X")
             .setIcon(PlatformIcon.createWithAdaptiveBitmap(icon))
             .setIntent(Intent(Intent.ACTION_MAIN, null, context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             .build()
@@ -1537,6 +1562,49 @@ private fun OffsetRow(offsetMs: Long, onOffset: (Long) -> Unit) {
 }
 
 @Composable
+private fun AlignRow(position: Float, onPosition: (Float) -> Unit) {
+    var sliderValue by remember(position) { mutableFloatStateOf(position) }
+    val snapped = (sliderValue * 100f).roundToInt() / 100f
+    val delta = ((.5f - snapped) * 100f).roundToInt()
+    Column(Modifier.fillMaxWidth().padding(start = 66.dp, end = 18.dp, top = 12.dp, bottom = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("歌词高亮位置", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "把高亮的歌词行整体上下移动：数值越大越靠上，越靠近封面；越小越靠下",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            ValuePill(
+                when {
+                    delta == 0 -> "居中"
+                    delta > 0 -> "偏上 $delta%"
+                    else -> "偏下 ${-delta}%"
+                },
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OlbyineIconButton(Icons.Rounded.Remove, "下移 5%", {
+                val next = (snapped - .05f).coerceAtLeast(.15f)
+                sliderValue = next; onPosition(next)
+            }, size = 32.dp, iconSize = 16.dp)
+            OlbyineSlider(
+                value = sliderValue,
+                onValueChange = { sliderValue = it },
+                onValueChangeFinished = { onPosition((sliderValue * 100f).roundToInt() / 100f) },
+                valueRange = .15f..0.85f,
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+            )
+            OlbyineIconButton(Icons.Rounded.Add, "上移 5%", {
+                val next = (snapped + .05f).coerceAtMost(.85f)
+                sliderValue = next; onPosition(next)
+            }, size = 32.dp, iconSize = 16.dp)
+        }
+    }
+}
+
+@Composable
 private fun FontRow(hasCustomFont: Boolean, onImport: () -> Unit, onClear: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(16.dp),
@@ -1709,7 +1777,7 @@ private fun AboutRow() {
         }
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            Text("Olbyine Music", style = MaterialTheme.typography.titleLarge)
+            Text("Olbyine-X", style = MaterialTheme.typography.titleLarge)
             Text(
                 "版本 ${BuildConfig.VERSION_NAME} 正式版",
                 style = MaterialTheme.typography.bodySmall,

@@ -263,9 +263,15 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val appleSettings by viewModel.appleMusicSettings.collectAsState()
     val usbDriver by viewModel.usbDriverState.collectAsState()
     val neteaseState by viewModel.neteaseState.collectAsState()
+    val collectionResume by viewModel.collectionResume.collectAsState()
+    val activeCollection by viewModel.activeCollection.collectAsState()
     val albums by viewModel.albums.collectAsState()
     val importProgress by viewModel.importProgress.collectAsState()
     val albumRequest by viewModel.albumRequest.collectAsState()
+    val trackReveal by viewModel.trackReveal.collectAsState()
+    val onlineReveal by viewModel.onlineReveal.collectAsState()
+    val appUpdate by viewModel.appUpdate.collectAsState()
+    var scRevealUser by remember { mutableStateOf<com.olbyine.music.data.ScUser?>(null) }
     var playlistPickerFor by remember { mutableStateOf<Track?>(null) }
     val trackActions = remember(viewModel) {
         TrackActions(
@@ -280,6 +286,14 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     var scCommentsFor by remember { mutableStateOf<Pair<Long, String>?>(null) }
     val openScComments: (Long, String) -> Unit = { id, title -> scCommentsFor = id to title }
     var streamingProvider by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("netease") }
+    LaunchedEffect(onlineReveal) {
+        val request = onlineReveal ?: return@LaunchedEffect
+        streamingProvider = request.provider
+        viewModel.navigateTo(AppDestination.ONLINE)
+        if (request.provider == "soundcloud" && request.scTrackId > 0) {
+            scRevealUser = runCatching { viewModel.soundCloud.trackInfo(request.scTrackId).second }.getOrNull()
+        }
+    }
     var scSearch by remember { mutableStateOf<String?>(null) }
     val touchOrigin = AppTouchOrigin
     val ncmStack = rememberPageStack<NcmRoute>()
@@ -680,6 +694,12 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             },
                             LocalSearchSoundCloud provides searchSoundCloud,
                             LocalNcmPush provides pushNcm,
+                            LocalCollectionResume provides { key -> collectionResume[key] },
+                            LocalResumeCollection provides { key, songs -> runPlaybackAction { viewModel.resumeNeteaseCollection(key, songs) } },
+                            LocalPlayNeteaseCollection provides { key, songs, index, shuffle, startMs ->
+                                runPlaybackAction { viewModel.playNeteaseSongs(songs, index, shuffle, key, startMs) }
+                            },
+                            LocalActiveCollection provides activeCollection,
                         ) {
                             AnimatedContent(
                                 targetState = streamingProvider,
@@ -695,7 +715,10 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                     bottomPadding = scaffoldPadding.calculateBottomPadding(),
                                     currentTrackId = state.currentTrack?.id,
                                     isPlaying = state.playback.isPlaying,
-                                    onPlay = { songs, index, shuffle -> runPlaybackAction { viewModel.playNavidrome(songs, index, shuffle) } },
+                                    onPlay = { songs, index, shuffle, origin -> runPlaybackAction { viewModel.playNavidrome(songs, index, shuffle, origin) } },
+                                    revealTitle = onlineReveal?.takeIf { it.provider == "navidrome" }?.title,
+                                    revealAlbum = onlineReveal?.takeIf { it.provider == "navidrome" }?.ndAlbum,
+                                    onRevealHandled = viewModel::clearOnlineReveal,
                                 )
                             } else if (provider == "soundcloud") {
                                 SoundCloudScreen(
@@ -707,7 +730,14 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                     onSearchHandled = { scSearch = null },
                                     openUser = scOpenRequest as? com.olbyine.music.data.ScUser,
                                     onOpenUserHandled = { scOpenRequest = null },
-                                    onPlay = { tracks, index, shuffle -> runPlaybackAction { viewModel.playSoundCloud(tracks, index, shuffle) } },
+                                    revealUser = scRevealUser,
+                                    revealPlaylist = onlineReveal?.takeIf { it.provider == "soundcloud" }?.scPlaylist,
+                                    revealTrackId = onlineReveal?.takeIf { it.provider == "soundcloud" }?.scTrackId,
+                                    onRevealHandled = {
+                                        scRevealUser = null
+                                        viewModel.clearOnlineReveal()
+                                    },
+                                    onPlay = { tracks, index, shuffle, origin -> runPlaybackAction { viewModel.playSoundCloud(tracks, index, shuffle, origin) } },
                                 )
                             } else {
                                 NeteaseScreen(
@@ -726,6 +756,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onOnlinePlayback = viewModel::setNeteaseOnline,
                             onSignOut = viewModel::signOutNetease,
                             client = viewModel.neteaseClient,
+                            revealSongId = onlineReveal?.takeIf { it.provider == "netease" }?.songId,
+                            onRevealHandled = viewModel::clearOnlineReveal,
                         )
                             }
                             }
@@ -739,7 +771,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onAddTracksToPlaylist = viewModel::addTracksToPlaylist,
                             onSearch = viewModel::setSearch,
                             onFilter = viewModel::setLibraryFilter,
-                            onPlayTracks = { tracks, index -> runPlaybackAction { viewModel.playTracks(tracks, index) } },
+                            onPlayTracks = { tracks, index, origin -> runPlaybackAction { viewModel.playTracks(tracks, index, origin) } },
                             onPlayInOrder = playInOrder,
                             onShufflePlay = shufflePlay,
                             onFavorite = viewModel::toggleFavorite,
@@ -764,6 +796,9 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onImportNeteasePlaylist = viewModel::openPlaylistImport,
                             onExternalLyrics = openListening,
                             albumRequest = albumRequest,
+                            revealTrackId = trackReveal,
+                            onRevealHandled = viewModel::clearTrackReveal,
+                            onPlayOrigin = viewModel::setPlayOrigin,
                             onAlbumRequestHandled = viewModel::consumeAlbumRequest,
                             nav = libraryNav,
                             onAlbumStyle = viewModel::setAlbumStyle,
@@ -826,6 +861,12 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 LocalNeteaseComments provides openComments,
                 LocalNeteaseChat provides openChat,
                 LocalOpenArtist provides openArtist,
+                LocalCollectionResume provides { key -> collectionResume[key] },
+                LocalResumeCollection provides { key, songs -> runPlaybackAction { viewModel.resumeNeteaseCollection(key, songs) } },
+                LocalPlayNeteaseCollection provides { key, songs, index, shuffle, startMs ->
+                    runPlaybackAction { viewModel.playNeteaseSongs(songs, index, shuffle, key, startMs) }
+                },
+                LocalActiveCollection provides activeCollection,
             ) {
                 NeteaseOverlayHost(
                     stack = ncmStack,
@@ -979,6 +1020,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onMatchMetadata = { viewModel.matchMetadata(state.currentTrack) },
                             onPlayQueueIndex = viewModel::playQueueIndex,
                             onOpenLibrary = { viewModel.navigateTo(AppDestination.LIBRARY) },
+                            onRevealInLibrary = { state.currentTrack?.let(viewModel::revealInLibrary) },
                             onListening = setListening,
                             onGrantAccess = grantAccess,
                             onOpenExternalApp = openExternalApp,
@@ -1056,6 +1098,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                 fontPath = state.settings.lyricFontPath,
                                 inactiveOpacity = state.settings.lyricInactiveOpacity,
                                 offsetMs = state.settings.lyricOffsetMs,
+                                alignPosition = state.settings.lyricAlignPosition,
                                 onBack = { setPage(0) },
                                 onSeek = { position ->
                                     haptics.click(com.olbyine.music.data.HapticArea.LYRICS)
@@ -1316,6 +1359,33 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                         }
                     }
                 }
+            }
+        }
+    }
+    appUpdate?.let { update ->
+        OlbyineDialog(
+            onDismissRequest = viewModel::dismissAppUpdate,
+            title = "发现新版本 ${update.version}",
+            confirmButton = {
+                GlassTextButton(onClick = {
+                    val target = update.apkUrl ?: update.pageUrl
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(target))
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                    viewModel.dismissAppUpdate()
+                }) { Text("前往下载") }
+            },
+            dismissButton = { GlassTextButton(onClick = viewModel::dismissAppUpdate) { Text("稍后") } },
+        ) {
+            Column(Modifier.heightIn(max = 320.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                Text(
+                    update.notes.ifBlank { "这个版本没有附更新说明，点「前往下载」查看详情。" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
         }
     }

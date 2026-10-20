@@ -15,6 +15,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -117,6 +118,8 @@ internal fun NeteaseScreen(
     onOnlinePlayback: (Boolean) -> Unit,
     onSignOut: () -> Unit,
     client: com.olbyine.music.data.NeteaseClient? = null,
+    revealSongId: Long? = null,
+    onRevealHandled: () -> Unit = {},
 ) {
     val open = state.openPlaylist
     val pages = rememberPageStack<NeteasePlaylistSummary>()
@@ -124,12 +127,20 @@ internal fun NeteaseScreen(
         if (open != null && pages.top?.id != open.id) pages.pushFromTouch(open)
         if (open == null && !pages.isEmpty) pages.pop()
     }
+    val goBack: () -> Unit = {
+        if (pages.size > 1) {
+            pages.pop()
+            pages.top?.let(onOpenPlaylist)
+        } else {
+            onClosePlaylist()
+        }
+    }
     var shown by remember { mutableStateOf(state) }
     if (state.openPlaylist != null) shown = state
     PageStack(
         pages,
-        backEnabled = open != null,
-        onBack = onClosePlaylist,
+        backEnabled = !pages.isEmpty,
+        onBack = goBack,
         base = { NeteaseHome(state, onlinePlayback, bottomContentPadding, currentTrackId, client, onLogin, onRefresh, onOpenPlaylist, onPlay, onOnlinePlayback, onSignOut) },
     ) { playlist ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {}) {
@@ -140,10 +151,12 @@ internal fun NeteaseScreen(
                 bottomContentPadding = bottomContentPadding,
                 currentTrackId = currentTrackId,
                 isPlaying = isPlaying,
-                onBack = onClosePlaylist,
+                onBack = goBack,
                 onPlay = onPlay,
                 onLike = onLike,
                 onSaveLocal = onSaveLocal,
+                revealSongId = revealSongId.takeIf { pages.top?.id == playlist.id },
+                onRevealed = onRevealHandled,
             )
         }
     }
@@ -372,14 +385,40 @@ private fun NeteasePlaylistPage(
     onPlay: (List<NeteaseSong>, Int, Boolean) -> Unit,
     onLike: (Long) -> Unit,
     onSaveLocal: () -> Unit,
+    revealSongId: Long? = null,
+    onRevealed: () -> Unit = {},
 ) {
     val allSongs = state.songs
+    val summary = state.openPlaylist?.takeIf { it.id == playlist.id } ?: playlist
     var query by androidx.compose.runtime.saveable.rememberSaveable(playlist.id) { mutableStateOf("") }
     val songs = remember(allSongs, query) { filterSongs(allSongs, query) }
     val localCount = remember(allSongs, state.localMatches) { allSongs.count { it.id in state.localMatches } }
     val haptics = rememberHaptics()
+    val resumeKey = collectionKey(summary.kind.name, summary.id)
+    val scopedPlay = LocalPlayNeteaseCollection.current
+    val play: (Int, Boolean) -> Unit = { index, shuffle ->
+        if (scopedPlay != null) scopedPlay(resumeKey, songs, index, shuffle, 0L) else onPlay(songs, index, shuffle)
+    }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val revealLead = 1 + (if (state.songsLoading && songs.isNotEmpty()) 1 else 0) + (if (state.message != null) 1 else 0)
+    val revealOffset = with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }
+    var handledReveal by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(revealSongId, songs, state.songsLoading) {
+        val id = revealSongId ?: return@LaunchedEffect
+        if (handledReveal == id) return@LaunchedEffect
+        val index = songs.indexOfFirst { it.id == id }
+        if (index < 0) {
+            if (songs.isNotEmpty() || !state.songsLoading) onRevealed()
+            return@LaunchedEffect
+        }
+        handledReveal = id
+        listState.scrollToItem(revealLead + index)
+        listState.scrollBy(-revealOffset.toFloat())
+        onRevealed()
+    }
     androidx.compose.foundation.lazy.LazyColumn(
         Modifier.fillMaxSize(),
+        state = listState,
         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = bottomContentPadding + 24.dp),
     ) {
         item(key = "header") {
@@ -388,23 +427,24 @@ private fun NeteasePlaylistPage(
                 OlbyineIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "返回", onBack, size = 38.dp, iconSize = 19.dp)
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (playlist.liked) {
+                    if (summary.liked) {
                         Box(
                             Modifier.size(112.dp).clip(RoundedCornerShape(20.dp))
                                 .background(Brush.linearGradient(listOf(Color(0xFFFF4D6D), Color(0xFFB72A6F)))),
                             contentAlignment = Alignment.Center,
                         ) { StyledIcon(Icons.Rounded.Favorite, null, Modifier.size(48.dp), tint = Color.White) }
                     } else {
-                        UrlImage(playlist.coverUrl?.let { "$it?param=500y500" }, Modifier.size(112.dp).clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
+                        val cover = summary.coverUrl ?: songs.firstOrNull()?.coverUrl
+                        UrlImage(cover?.let { "$it?param=500y500" }, Modifier.size(112.dp).clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
                     }
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(if (playlist.liked) "我喜欢的音乐" else playlist.name, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(if (summary.liked) "我喜欢的音乐" else summary.name, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            (if (allSongs.isNotEmpty()) "${allSongs.size} 首" else "${playlist.trackCount} 首") + " · 本地已有 $localCount 首" +
-                                (playlist.creator.takeIf { it.isNotBlank() && !playlist.own }?.let { " · $it" } ?: "") +
-                                (playlist.note.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                            (if (allSongs.isNotEmpty()) "${allSongs.size} 首" else "${summary.trackCount} 首") + " · 本地已有 $localCount 首" +
+                                (summary.creator.takeIf { it.isNotBlank() && !summary.own }?.let { " · $it" } ?: "") +
+                                (summary.note.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -412,8 +452,8 @@ private fun NeteasePlaylistPage(
                 }
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PillButton("播放", { haptics.click(HapticArea.PLAYBACK); onPlay(songs, 0, false) }, icon = Icons.Rounded.PlayArrow, enabled = songs.isNotEmpty())
-                    PillButton("随机", { haptics.click(HapticArea.PLAYBACK); onPlay(songs, 0, true) }, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = songs.isNotEmpty())
+                    PillButton("播放", { haptics.click(HapticArea.PLAYBACK); play(0, false) }, icon = Icons.Rounded.PlayArrow, enabled = songs.isNotEmpty())
+                    PillButton("随机", { haptics.click(HapticArea.PLAYBACK); play(0, true) }, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = songs.isNotEmpty())
                     Spacer(Modifier.weight(1f))
                     GhostIconButton(Icons.Rounded.LibraryAdd, "存为本地歌单", onSaveLocal, enabled = localCount > 0)
                 }
@@ -427,7 +467,16 @@ private fun NeteasePlaylistPage(
                 }
                 if (allSongs.size > 8) {
                     Spacer(Modifier.height(12.dp))
-                    OlbyineSearchField(query, { query = it }, if (playlist.liked) "在我喜欢的音乐中搜索" else "在歌单中搜索", Modifier.fillMaxWidth())
+                    OlbyineSearchField(query, { query = it }, if (summary.liked) "在我喜欢的音乐中搜索" else "在歌单中搜索", Modifier.fillMaxWidth())
+                }
+                val resumePoint = LocalCollectionResume.current?.invoke(resumeKey)
+                val resumeCollection = LocalResumeCollection.current
+                if (resumePoint != null && resumeCollection != null && LocalActiveCollection.current != resumeKey) {
+                    Spacer(Modifier.height(10.dp))
+                    CollectionResumeRow(resumePoint) {
+                        haptics.click(HapticArea.PLAYBACK)
+                        resumeCollection(resumeKey, allSongs)
+                    }
                 }
                 Spacer(Modifier.height(10.dp))
             }
@@ -452,7 +501,7 @@ private fun NeteasePlaylistPage(
             Row(
                 itemMotion().fillMaxWidth().clip(RoundedCornerShape(16.dp))
                     .background(highlight)
-                    .clickable(enabled = playable) { haptics.click(HapticArea.PLAYBACK); onPlay(songs, index, false) }
+                    .clickable(enabled = playable) { haptics.click(HapticArea.PLAYBACK); play(index, false) }
                     .padding(start = 6.dp, top = 6.dp, bottom = 6.dp)
                     .graphicsLayer { alpha = dim },
                 verticalAlignment = Alignment.CenterVertically,
@@ -508,6 +557,9 @@ private fun NeteasePlaylistPage(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 val liked = song.id in state.liked
+                val openArtist = LocalOpenArtist.current
+                val openLink = LocalNeteaseLinks.current
+                val artistName = song.artists.firstOrNull().orEmpty()
                 HeartWithMenu(
                     track = { song.toTrack() },
                     liked = liked,
@@ -516,8 +568,15 @@ private fun NeteasePlaylistPage(
                     idleColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     iconSize = 20.dp,
                     minSize = 40.dp,
+                    onOpenArtist = if (openArtist != null) ({ openArtist(song.artistIds.firstOrNull(), artistName) }) else null,
+                    onOpenAlbum = if (openLink != null && song.albumId > 0) ({
+                        openLink(com.olbyine.music.data.NeteaseTarget.Album(song.albumId))
+                    }) else null,
                 )
             }
+        }
+        if (state.songsPartial) item(key = "more") {
+            Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
         }
     }
 }

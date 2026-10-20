@@ -16,6 +16,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -259,7 +260,7 @@ internal fun LibraryScreen(
     bottomContentPadding: Dp,
     onSearch: (String) -> Unit,
     onFilter: (LibraryFilter) -> Unit,
-    onPlayTracks: (List<Track>, Int) -> Unit,
+    onPlayTracks: (List<Track>, Int, com.olbyine.music.PlayOrigin?) -> Unit,
     onPlayInOrder: (List<Track>) -> Unit,
     onShufflePlay: (List<Track>) -> Unit,
     onFavorite: (Track) -> Unit,
@@ -287,6 +288,9 @@ internal fun LibraryScreen(
     onExternalLyrics: () -> Unit,
     albumRequest: String? = null,
     onAlbumRequestHandled: () -> Unit = {},
+    revealTrackId: com.olbyine.music.LibraryReveal? = null,
+    onRevealHandled: () -> Unit = {},
+    onPlayOrigin: (com.olbyine.music.PlayOrigin) -> Unit = {},
     nav: LibraryNav = rememberLibraryNav(state.libraryFilter == LibraryFilter.FAVORITES),
     onAlbumStyle: (String) -> Unit = {},
 ) {
@@ -300,6 +304,32 @@ internal fun LibraryScreen(
         onFilter(LibraryFilter.ALL)
         albumKey = request
         onAlbumRequestHandled()
+    }
+    LaunchedEffect(revealTrackId, state.libraryLoaded) {
+        val request = revealTrackId ?: return@LaunchedEffect
+        val target = state.tracks.firstOrNull { it.id == request.trackId }
+        if (target == null) {
+            if (state.libraryLoaded) onRevealHandled()
+            return@LaunchedEffect
+        }
+        albumKey = null
+        onFolder(null)
+        onPlaylist(null)
+        onFilter(LibraryFilter.ALL)
+        when (request.kind) {
+            "playlist" -> {
+                section = LibrarySection.PLAYLISTS
+                onPlaylist(request.id.takeIf { it.isNotBlank() })
+            }
+            "album" -> {
+                section = LibrarySection.ALBUMS
+                albumKey = request.id.takeIf { it.isNotBlank() }
+            }
+            else -> {
+                section = LibrarySection.FOLDERS
+                onFolder(target.folderId ?: "")
+            }
+        }
     }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var creatingPlaylist by remember { mutableStateOf(false) }
@@ -332,6 +362,24 @@ internal fun LibraryScreen(
     val playlistOpen = section == LibrarySection.PLAYLISTS && selectedPlaylist != null
     val albumOpen = section == LibrarySection.ALBUMS && openAlbum != null
     val underPlayer = state.destination == AppDestination.NOW_PLAYING
+    val currentOrigin: () -> com.olbyine.music.PlayOrigin = {
+        when {
+            playlistOpen && selectedPlaylist != null -> com.olbyine.music.PlayOrigin("playlist", selectedPlaylist.id, selectedPlaylist.name)
+            albumOpen && openAlbum != null -> com.olbyine.music.PlayOrigin("album", openAlbum.key, openAlbum.title)
+            else -> com.olbyine.music.PlayOrigin("folder", currentPage.folderId ?: "")
+        }
+    }
+    val playFromList: (List<Track>, Int) -> Unit = { tracks, index ->
+        onPlayTracks(tracks, index, currentOrigin())
+    }
+    val playAllFromList: (List<Track>) -> Unit = { tracks ->
+        onPlayOrigin(currentOrigin())
+        onPlayInOrder(tracks)
+    }
+    val shuffleList: (List<Track>) -> Unit = { tracks ->
+        onPlayOrigin(currentOrigin())
+        onShufflePlay(tracks)
+    }
     androidx.compose.runtime.key(selection.active, searchOpen, folderOpen || playlistOpen || albumOpen, underPlayer) {
         BackHandler(enabled = selection.active && !underPlayer) { selection.clear() }
         BackHandler(enabled = !selection.active && searchOpen && !underPlayer) {
@@ -531,8 +579,8 @@ internal fun LibraryScreen(
                                         cover = { TrackArtwork(openAlbum.cover, Modifier.size(128.dp).sharedAlbumCover(openAlbum.key), 18.dp, decodeEdge = 512) },
                                         onBack = { albumKey = null },
                                         tracks = displayedTracks,
-                                        onPlay = { onPlayInOrder(displayedTracks) },
-                                        onShuffle = { onShufflePlay(displayedTracks) },
+                                        onPlay = { playAllFromList(displayedTracks) },
+                                        onShuffle = { shuffleList(displayedTracks) },
                                         sortMode = null,
                                         onSortMode = onSortMode,
                                     )
@@ -550,9 +598,9 @@ internal fun LibraryScreen(
                                         cover = { CoverMosaic(folderTracks.take(4), Modifier.size(112.dp), 18.dp, path) },
                                         onBack = { onFolder(null) },
                                         tracks = displayedTracks,
-                                        onFanCard = { track -> onPlayTracks(displayedTracks, displayedTracks.indexOf(track).coerceAtLeast(0)) },
-                                        onPlay = { onPlayInOrder(displayedTracks) },
-                                        onShuffle = { onShufflePlay(displayedTracks) },
+                                        onFanCard = { track -> playFromList(displayedTracks, displayedTracks.indexOf(track).coerceAtLeast(0)) },
+                                        onPlay = { playAllFromList(displayedTracks) },
+                                        onShuffle = { shuffleList(displayedTracks) },
                                         sortMode = state.librarySortMode,
                                         onSortMode = onSortMode,
                                     )
@@ -568,9 +616,9 @@ internal fun LibraryScreen(
                                         cover = { CoverMosaic(playlistTracks.take(4), Modifier.size(112.dp), 18.dp, selectedPlaylist.id) },
                                         onBack = { onPlaylist(null) },
                                         tracks = displayedTracks,
-                                        onFanCard = { track -> onPlayTracks(displayedTracks, displayedTracks.indexOf(track).coerceAtLeast(0)) },
-                                        onPlay = { onPlayInOrder(displayedTracks) },
-                                        onShuffle = { onShufflePlay(displayedTracks) },
+                                        onFanCard = { track -> playFromList(displayedTracks, displayedTracks.indexOf(track).coerceAtLeast(0)) },
+                                        onPlay = { playAllFromList(displayedTracks) },
+                                        onShuffle = { shuffleList(displayedTracks) },
                                         sortMode = null,
                                         onSortMode = onSortMode,
                                         extraAction = {
@@ -585,8 +633,8 @@ internal fun LibraryScreen(
                                         count = displayedTracks.size,
                                         totalMs = displayedTracks.sumOf { it.durationMs },
                                         enabled = displayedTracks.isNotEmpty(),
-                                        onPlay = { onPlayInOrder(displayedTracks) },
-                                        onShuffle = { onShufflePlay(displayedTracks) },
+                                        onPlay = { playAllFromList(displayedTracks) },
+                                        onShuffle = { shuffleList(displayedTracks) },
                                     )
                                 }
                             }
@@ -626,10 +674,12 @@ internal fun LibraryScreen(
                             TileWall(
                                 newItems = wallItems,
                                 playback = state.playback,
-                                onClick = { index -> onPlayTracks(displayedTracks, index) },
+                                onClick = { index -> playFromList(displayedTracks, index) },
                                 topContentPadding = topPadding,
                                 bottomContentPadding = bottomContentPadding,
                                 header = header,
+                                revealIndex = revealTrackId?.let { request -> displayedTracks.indexOfFirst { it.id == request.trackId } }?.takeIf { it >= 0 },
+                                onRevealed = onRevealHandled,
                             )
                         } else TrackCollection(
                             tracks = displayedTracks,
@@ -642,9 +692,11 @@ internal fun LibraryScreen(
                             isPlaying = state.playback.isPlaying,
                             callbacks = callbacks,
                             selection = selection,
-                            onPlayTracks = onPlayTracks,
+                            onPlayTracks = playFromList,
                             header = header,
                             empty = empty,
+                            revealId = revealTrackId,
+                            onRevealed = onRevealHandled,
                             topContentPadding = topPadding,
                             bottomContentPadding = bottomContentPadding,
                         )
@@ -1139,6 +1191,8 @@ private fun TrackCollection(
     empty: (@Composable () -> Unit)?,
     topContentPadding: Dp,
     bottomContentPadding: Dp,
+    revealId: com.olbyine.music.LibraryReveal? = null,
+    onRevealed: () -> Unit = {},
 ) {
     val bottom = bottomContentPadding + 20.dp
     val haptics = rememberHaptics()
@@ -1154,9 +1208,23 @@ private fun TrackCollection(
         haptics.heavy(HapticArea.SCRUB)
         selection.toggle(track.id)
     }
+    val revealOffset = with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }
     if (viewMode == LibraryViewMode.GRID && empty == null) {
         val gridState = rememberLazyGridState()
-        LaunchedEffect(sortMode, tracks.firstOrNull()?.id) { gridState.scrollToItem(0) }
+        LaunchedEffect(sortMode, tracks.firstOrNull()?.id) {
+            if (revealId == null) gridState.scrollToItem(0)
+        }
+        LaunchedEffect(revealId, tracks) {
+            val id = revealId?.trackId ?: return@LaunchedEffect
+            val index = tracks.indexOfFirst { it.id == id }
+            if (index < 0) {
+                if (tracks.isNotEmpty()) onRevealed()
+                return@LaunchedEffect
+            }
+            gridState.scrollToItem(index + 1)
+            gridState.scrollBy(-revealOffset.toFloat())
+            onRevealed()
+        }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(150.dp),
             state = gridState,
@@ -1185,7 +1253,23 @@ private fun TrackCollection(
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    LaunchedEffect(callbacks.activePlaylist?.id, tracks.firstOrNull()?.id, sortMode) { listState.scrollToItem(0) }
+    LaunchedEffect(callbacks.activePlaylist?.id, tracks.firstOrNull()?.id, sortMode) {
+        if (revealId == null) listState.scrollToItem(0)
+    }
+    var handledReveal by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(revealId, tracks) {
+        val id = revealId?.trackId ?: return@LaunchedEffect
+        if (handledReveal == id) return@LaunchedEffect
+        val index = tracks.indexOfFirst { it.id == id }
+        if (index < 0) {
+            if (tracks.isNotEmpty()) onRevealed()
+            return@LaunchedEffect
+        }
+        handledReveal = id
+        listState.scrollToItem(index + 1)
+        listState.scrollBy(-revealOffset.toFloat())
+        onRevealed()
+    }
     val letters = remember(tracks, sortMode, keys) {
         tracks.mapIndexed { index, track ->
             val key = keys[track.id]?.forMode(sortMode) ?: SortKeys.cachedOrPlain(track.title)

@@ -121,6 +121,7 @@ data class UserSettings(
     val lyricFontSize: Float = 30f,
     val lyricInactiveOpacity: Float = 0.38f,
     val lyricOffsetMs: Long = 0L,
+    val lyricAlignPosition: Float = 0.5f,
     val hapticsEnabled: Boolean = true,
     val statusBarLyricsEnabled: Boolean = false,
     val automaticLyricsEnabled: Boolean = false,
@@ -183,6 +184,7 @@ data class UserSettings(
     val usbVolumeMode: UsbVolumeMode = UsbVolumeMode.HARDWARE,
     val usbMaxVolume: Int = 100,
     val neteaseOnline: Boolean = true,
+    val autoUpdateCheck: Boolean = true,
     val neteaseQuality: String = "exhigh",
 )
 

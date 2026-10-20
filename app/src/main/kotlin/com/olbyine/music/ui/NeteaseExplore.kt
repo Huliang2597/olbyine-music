@@ -119,6 +119,22 @@ internal fun <T> rememberLoad(vararg keys: Any?, load: suspend () -> T): Pair<Lo
 }
 
 @Composable
+internal fun <T> rememberLoadStream(vararg keys: Any?, load: () -> kotlinx.coroutines.flow.Flow<T>): Pair<Loaded<T>, () -> Unit> {
+    var state by remember(*keys) { mutableStateOf(Loaded<T>(loading = true)) }
+    var attempt by remember(*keys) { mutableStateOf(0) }
+    LaunchedEffect(*keys, attempt) {
+        state = Loaded(state.value, loading = true)
+        try {
+            load().collect { value -> state = Loaded(value) }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            state = Loaded(state.value, error = error.message ?: "加载失败，请检查网络")
+        }
+    }
+    return state to { attempt++ }
+}
+
+@Composable
 internal fun LoadingOrError(loading: Boolean, error: String?, onRetry: () -> Unit, modifier: Modifier = Modifier, accent: Color = Color.Unspecified) {
     val reduce = LocalReduceMotion.current
     Box(modifier.fillMaxWidth().heightIn(min = 160.dp), contentAlignment = Alignment.Center) {

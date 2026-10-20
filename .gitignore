@@ -6,9 +6,12 @@ local.properties
 *.keystore
 *.apk
 *.aab
+!dist/*.apk
 .idea/
 *.iml
 .DS_Store
 lyrics-engine/node_modules/
 captures/
 .cxx/
+keystore.properties
+keystore/

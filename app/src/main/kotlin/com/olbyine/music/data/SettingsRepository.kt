@@ -24,6 +24,10 @@ class SettingsRepository(context: Context) {
         it.copy(lyricOffsetMs = value.coerceIn(-5_000L, 5_000L))
     }
 
+    fun setLyricAlignPosition(value: Float) = update {
+        it.copy(lyricAlignPosition = value.coerceIn(0.15f, 0.85f))
+    }
+
     fun setHapticsEnabled(value: Boolean) = update { it.copy(hapticsEnabled = value) }
 
     fun setStatusBarLyricsEnabled(value: Boolean) = update { it.copy(statusBarLyricsEnabled = value) }
@@ -129,6 +133,8 @@ class SettingsRepository(context: Context) {
     fun setUsbVolumeMode(value: UsbVolumeMode) = update { it.copy(usbVolumeMode = value) }
     fun setUsbMaxVolume(value: Int) = update { it.copy(usbMaxVolume = value.coerceIn(10, 100)) }
     fun setNeteaseOnline(value: Boolean) = update { it.copy(neteaseOnline = value) }
+
+    fun setAutoUpdateCheck(value: Boolean) = update { it.copy(autoUpdateCheck = value) }
     fun setNeteaseQuality(value: String) = update { it.copy(neteaseQuality = value) }
 
     private fun update(transform: (UserSettings) -> UserSettings) {
@@ -140,6 +146,7 @@ class SettingsRepository(context: Context) {
             .putFloat(KEY_LYRIC_SIZE, next.lyricFontSize)
             .putFloat(KEY_LYRIC_OPACITY, next.lyricInactiveOpacity)
             .putLong(KEY_LYRIC_OFFSET, next.lyricOffsetMs)
+            .putFloat(KEY_LYRIC_ALIGN, next.lyricAlignPosition)
             .putBoolean(KEY_HAPTICS, next.hapticsEnabled)
             .putBoolean(KEY_STATUS_BAR_LYRICS, next.statusBarLyricsEnabled)
             .putBoolean(KEY_AUTOMATIC_LYRICS, next.automaticLyricsEnabled)
@@ -203,6 +210,7 @@ class SettingsRepository(context: Context) {
             .putString(KEY_USB_VOLUME_MODE, next.usbVolumeMode.name)
             .putInt(KEY_USB_MAX_VOLUME, next.usbMaxVolume)
             .putBoolean(KEY_NETEASE_ONLINE, next.neteaseOnline)
+            .putBoolean(KEY_AUTO_UPDATE, next.autoUpdateCheck)
             .putString(KEY_NETEASE_QUALITY, next.neteaseQuality)
             .apply()
         com.olbyine.music.playback.AudioEffects.update(next)
@@ -217,6 +225,7 @@ class SettingsRepository(context: Context) {
             lyricFontSize = preferences.getFloat(KEY_LYRIC_SIZE, 30f),
             lyricInactiveOpacity = preferences.getFloat(KEY_LYRIC_OPACITY, 0.38f),
             lyricOffsetMs = preferences.getLong(KEY_LYRIC_OFFSET, 0L),
+            lyricAlignPosition = preferences.getFloat(KEY_LYRIC_ALIGN, .5f).coerceIn(.15f, .85f),
             hapticsEnabled = preferences.getBoolean(KEY_HAPTICS, true),
             statusBarLyricsEnabled = preferences.getBoolean(KEY_STATUS_BAR_LYRICS, false),
             automaticLyricsEnabled = preferences.getBoolean(KEY_AUTOMATIC_LYRICS, false),
@@ -282,6 +291,7 @@ class SettingsRepository(context: Context) {
             usbVolumeMode = runCatching { UsbVolumeMode.valueOf(preferences.getString(KEY_USB_VOLUME_MODE, null) ?: "HARDWARE") }.getOrDefault(UsbVolumeMode.HARDWARE),
             usbMaxVolume = preferences.getInt(KEY_USB_MAX_VOLUME, 100),
             neteaseOnline = preferences.getBoolean(KEY_NETEASE_ONLINE, true),
+            autoUpdateCheck = preferences.getBoolean(KEY_AUTO_UPDATE, true),
             neteaseQuality = preferences.getString(KEY_NETEASE_QUALITY, null) ?: "exhigh",
         ).also { com.olbyine.music.playback.AudioEffects.update(it) }
     }
@@ -312,11 +322,13 @@ class SettingsRepository(context: Context) {
         const val KEY_USB_VOLUME_MODE = "usb_volume_mode"
         const val KEY_USB_MAX_VOLUME = "usb_max_volume"
         const val KEY_NETEASE_ONLINE = "netease_online"
+        const val KEY_AUTO_UPDATE = "auto_update_check"
         const val KEY_NETEASE_QUALITY = "netease_quality"
         const val KEY_THEME = "theme"
         const val KEY_LYRIC_SIZE = "lyric_size"
         const val KEY_LYRIC_OPACITY = "lyric_opacity"
         const val KEY_LYRIC_OFFSET = "lyric_offset"
+    const val KEY_LYRIC_ALIGN = "lyric_align"
         const val KEY_HAPTICS = "haptics"
         const val KEY_STATUS_BAR_LYRICS = "status_bar_lyrics"
         const val KEY_AUTOMATIC_LYRICS = "automatic_lyrics"

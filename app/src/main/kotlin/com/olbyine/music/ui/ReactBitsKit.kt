@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
@@ -273,21 +274,29 @@ internal fun HeartWithMenu(
     iconSize: Dp = 24.dp,
     minSize: Dp = 44.dp,
     showQueueActions: Boolean = true,
+    onOpenArtist: (() -> Unit)? = null,
+    onOpenAlbum: (() -> Unit)? = null,
 ) {
     val actions = LocalTrackActions.current
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         PulseHeart(
             liked, onToggle, Modifier, count, likedColor, idleColor, pill, textColor, iconSize, minSize,
-            onLongPress = if (actions != null) ({ open = true }) else null,
+            onLongPress = if (actions != null) ({
+                if (showQueueActions) {
+                    open = true
+                } else {
+                    track()?.let(actions.addToPlaylist)
+                }
+            }) else null,
         )
-        if (actions != null) {
+        if (actions != null && showQueueActions) {
             OlbyineDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 GlassMenuItem("收藏到歌单", { open = false; track()?.let(actions.addToPlaylist) }, icon = Icons.AutoMirrored.Rounded.PlaylistAdd)
-                if (showQueueActions) {
-                    GlassMenuItem("下一首播放", { open = false; track()?.let(actions.playNext) }, icon = Icons.AutoMirrored.Rounded.PlaylistPlay)
-                    GlassMenuItem("加入播放列表", { open = false; track()?.let(actions.enqueue) }, icon = Icons.AutoMirrored.Rounded.QueueMusic)
-                }
+                GlassMenuItem("下一首播放", { open = false; track()?.let(actions.playNext) }, icon = Icons.AutoMirrored.Rounded.PlaylistPlay)
+                GlassMenuItem("加入播放列表", { open = false; track()?.let(actions.enqueue) }, icon = Icons.AutoMirrored.Rounded.QueueMusic)
+                if (onOpenArtist != null) GlassMenuItem("打开歌手页", { open = false; onOpenArtist() }, icon = Icons.Rounded.Mic)
+                if (onOpenAlbum != null) GlassMenuItem("打开专辑页", { open = false; onOpenAlbum() }, icon = Icons.Rounded.Album)
             }
         }
     }

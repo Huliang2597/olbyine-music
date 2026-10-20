@@ -2,6 +2,7 @@ package com.olbyine.music.ui
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -81,6 +83,7 @@ private class NdContext(
     val isPlaying: Boolean,
     val onPlay: (List<NdSong>, Int, Boolean) -> Unit,
     val open: (NdRoute) -> Unit,
+    val setOrigin: (com.olbyine.music.PlayOrigin?) -> Unit = {},
 )
 
 private val LocalNd = staticCompositionLocalOf<NdContext?> { null }
@@ -91,11 +94,46 @@ internal fun NavidromeScreen(
     bottomPadding: Dp,
     currentTrackId: String?,
     isPlaying: Boolean,
-    onPlay: (List<NdSong>, Int, Boolean) -> Unit,
+    onPlay: (List<NdSong>, Int, Boolean, com.olbyine.music.PlayOrigin?) -> Unit,
+    revealTitle: String? = null,
+    revealAlbum: com.olbyine.music.data.NdAlbum? = null,
+    onRevealHandled: () -> Unit = {},
 ) {
     val server by client.server.collectAsState()
+    var pendingSong by remember { mutableStateOf<String?>(null) }
+    var pendingRevealTitle by remember { mutableStateOf<String?>(null) }
     val routes = rememberPageStack<NdRoute>()
-    val context = NdContext(client, currentTrackId, isPlaying, onPlay) { routes.pushFromTouch(it) }
+    LaunchedEffect(revealTitle, revealAlbum) {
+        val direct = revealAlbum
+        if (direct != null) {
+            pendingSong = null
+            pendingRevealTitle = revealTitle
+            routes.clear()
+            routes.pushFromTouch(NdRoute.AlbumPage(direct))
+            return@LaunchedEffect
+        }
+        val title = revealTitle ?: return@LaunchedEffect
+        val found = runCatching { client.search(title) }.getOrNull()
+        val song = found?.songs?.firstOrNull { it.title.equals(title, ignoreCase = true) } ?: found?.songs?.firstOrNull()
+        val albumId = song?.albumId
+        if (albumId != null) {
+            val album = found?.albums?.firstOrNull { it.id == albumId }
+                ?: runCatching { client.album(albumId).first }.getOrNull()
+            if (album != null) {
+                pendingSong = song.id
+                routes.clear()
+                routes.pushFromTouch(NdRoute.AlbumPage(album))
+            }
+        }
+        onRevealHandled()
+    }
+    var playOrigin by remember { mutableStateOf<com.olbyine.music.PlayOrigin?>(null) }
+    val context = NdContext(
+        client, currentTrackId, isPlaying,
+        { songs, index, shuffle -> onPlay(songs, index, shuffle, playOrigin) },
+        { routes.pushFromTouch(it) },
+        setOrigin = { playOrigin = it },
+    )
     CompositionLocalProvider(LocalNd provides context) {
         if (server == null) {
             Column(Modifier.fillMaxSize()) {
@@ -110,7 +148,11 @@ internal fun NavidromeScreen(
                         .clickable(remember { MutableInteractionSource() }, indication = null) {},
                 ) {
                     when (route) {
-                        is NdRoute.AlbumPage -> NdAlbumPage(route.album, bottomPadding, back)
+                        is NdRoute.AlbumPage -> NdAlbumPage(route.album, bottomPadding, back, pendingSong, pendingRevealTitle) {
+                            pendingSong = null
+                            pendingRevealTitle = null
+                            onRevealHandled()
+                        }
                         is NdRoute.ArtistPage -> NdArtistPage(route.artist, bottomPadding, back)
                         is NdRoute.PlaylistPage -> NdPlaylistPage(route.playlist, bottomPadding, back)
                     }
@@ -458,24 +500,58 @@ private fun NdPageTop(title: String, subtitle: String?, onBack: () -> Unit) {
 }
 
 @Composable
-private fun NdAlbumPage(album: NdAlbum, bottomPadding: Dp, onBack: () -> Unit) {
+private fun NdAlbumPage(
+    album: NdAlbum,
+    bottomPadding: Dp,
+    onBack: () -> Unit,
+    revealSongId: String? = null,
+    revealTitle: String? = null,
+    onRevealed: () -> Unit = {},
+) {
     val nd = LocalNd.current ?: return
     val (state, retry) = rememberLoad(album.id) { nd.client.album(album.id) }
+    val loadedAlbum = state.value?.first
     val songs = state.value?.second
+    val shown = loadedAlbum ?: album
+    LaunchedEffect(album.id, loadedAlbum) {
+        nd.setOrigin(
+            com.olbyine.music.PlayOrigin("nd:album", album.id, shown.name, cover = shown.coverArt, ndAlbum = shown),
+        )
+    }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val revealOffset = with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }
+    var handledReveal by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(revealSongId, revealTitle, songs) {
+        val id = revealSongId ?: revealTitle ?: return@LaunchedEffect
+        if (handledReveal == id) return@LaunchedEffect
+        val index = when {
+            revealSongId != null -> songs?.indexOfFirst { it.id == revealSongId } ?: -1
+            else -> songs?.indexOfFirst { it.title.equals(revealTitle, ignoreCase = true) } ?: -1
+        }
+        if (index < 0) return@LaunchedEffect
+        handledReveal = id
+        listState.scrollToItem(index + 2)
+        listState.scrollBy(-revealOffset.toFloat())
+        onRevealed()
+    }
     Column(Modifier.fillMaxSize()) {
-        NdPageTop(album.name, album.artist, onBack)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = bottomPadding + 24.dp)) {
+        NdPageTop(shown.name, shown.artist, onBack)
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            state = listState,
+            contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = bottomPadding + 24.dp),
+        ) {
             item(key = "head") {
                 Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    NdCover(nd.client.coverUrl(album.coverArt, 600), Modifier.size(132.dp), Icons.Rounded.Album, corner = 18.dp)
+                    NdCover(nd.client.coverUrl(shown.coverArt, 600), Modifier.size(132.dp), Icons.Rounded.Album, corner = 18.dp)
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(album.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        Text(album.artist, Modifier.clip(CircleShape).clickable {
-                            album.artistId?.let { nd.open(NdRoute.ArtistPage(NdArtist(it, album.artist, 0, null))) }
+                        Text(shown.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(shown.artist, Modifier.clip(CircleShape).clickable {
+                            shown.artistId?.let { nd.open(NdRoute.ArtistPage(NdArtist(it, shown.artist, 0, null))) }
                         }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
                         Text(
-                            listOfNotNull(album.year.takeIf { it > 0 }?.toString(), "${(songs?.size ?: album.songCount)} 首", formatTotalDuration(album.durationSec * 1000)).joinToString(" · "),
+                            listOfNotNull(shown.year.takeIf { it > 0 }?.toString(), "${(songs?.size ?: shown.songCount)} 首", formatTotalDuration(shown.durationSec * 1000)).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

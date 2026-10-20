@@ -4,9 +4,12 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
@@ -101,6 +104,7 @@ data class NeteaseCollection(
     val ownerId: Long = 0,
     val artistId: Long = 0,
     val tags: List<String> = emptyList(),
+    val complete: Boolean = true,
 )
 
 data class NeteaseArtistHome(
@@ -806,6 +810,39 @@ class NeteaseClient(context: Context) {
         }
     }
 
+    fun collectionStream(target: NeteasePlaylistSummary): Flow<NeteaseCollection> = flow {
+        when (target.kind) {
+            NeteaseCollectionKind.PLAYLIST, NeteaseCollectionKind.CHART -> {
+                val detail = eapi("/api/v6/playlist/detail", JSONObject().put("id", target.id.toString()).put("n", "100000").put("s", "8"))
+                val playlist = detail.optJSONObject("playlist") ?: error(detail.optString("message").ifBlank { "歌单不可用" })
+                val creator = playlist.optJSONObject("creator")
+                val summary = playlistSummary(playlist).copy(kind = target.kind, liked = playlist.optInt("specialType") == 5)
+                val description = playlist.optString("description").takeIf { it != "null" }.orEmpty().trim()
+                val tags = playlist.optJSONArray("tags")?.let { rows -> (0 until rows.length()).map { rows.optString(it) } }.orEmpty()
+                val ownerId = creator?.optLong("userId") ?: 0L
+                val ids = playlist.optJSONArray("trackIds").objects().map { it.optLong("id") }.filter { it > 0 }
+                val privileges = HashMap<Long, JSONObject>()
+                detail.optJSONArray("privileges").objects().forEach { privileges[it.optLong("id")] = it }
+                val songs = java.util.concurrent.ConcurrentHashMap<Long, NeteaseSong>()
+                playlist.optJSONArray("tracks").objects().forEach { row -> song(row, privileges[row.optLong("id")])?.let { songs[it.id] = it } }
+                val firstIds = ids.take(FIRST_BATCH)
+                val missingFirst = firstIds.filter { !songs.containsKey(it) }
+                if (missingFirst.isNotEmpty()) songDetails(missingFirst).forEach { songs[it.id] = it }
+                fun snapshot() = ids.mapNotNull(songs::get)
+                emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = false))
+                val restIds = ids.drop(FIRST_BATCH).filter { !songs.containsKey(it) }
+                val chunks = restIds.chunked(REST_CHUNK)
+                chunks.forEachIndexed { index, chunk ->
+                    songDetails(chunk).forEach { songs[it.id] = it }
+                    emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = index == chunks.lastIndex))
+                }
+                if (chunks.isEmpty()) emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags))
+                runCatching { writeCache(target.id, snapshot()) }
+            }
+            else -> emit(collection(target))
+        }
+    }.flowOn(Dispatchers.IO)
+
     suspend fun userPlaylists(userId: Long): List<NeteasePlaylistSummary> = withContext(Dispatchers.IO) {
         api("/api/user/playlist", JSONObject().put("uid", userId.toString()).put("limit", "100").put("offset", "0").put("includeVideo", "true"))
             .optJSONArray("playlist").objects().map { row ->
@@ -1320,6 +1357,8 @@ class NeteaseClient(context: Context) {
     private fun String.https(): String? = takeIf { it.isNotBlank() && it != "null" }?.replace(Regex("^http://", RegexOption.IGNORE_CASE), "https://")
 
     companion object {
+        private const val FIRST_BATCH = 80
+        private const val REST_CHUNK = 400
         private const val KEY_MUSIC_U = "music_u"
         private const val KEY_ACCOUNT = "account"
         private const val KEY_DEVICE = "device_id"

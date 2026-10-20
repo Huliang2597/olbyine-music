@@ -146,6 +146,7 @@ data class NeteaseUiState(
     val openPlaylist: com.olbyine.music.data.NeteasePlaylistSummary? = null,
     val songs: List<com.olbyine.music.data.NeteaseSong> = emptyList(),
     val songsLoading: Boolean = false,
+    val songsPartial: Boolean = false,
     val liked: Set<Long> = emptySet(),
     val localMatches: Map<Long, String> = emptyMap(),
     val login: NeteaseLoginUiState? = null,
@@ -187,6 +188,74 @@ data class MainUiState(
     val libraryLoaded: Boolean = false,
 )
 
+data class PlayOrigin(
+    val kind: String,
+    val id: String,
+    val title: String = "",
+    val cover: String? = null,
+    val scPlaylist: com.olbyine.music.data.ScPlaylist? = null,
+    val ndAlbum: com.olbyine.music.data.NdAlbum? = null,
+    val ndPlaylist: com.olbyine.music.data.NdPlaylist? = null,
+)
+
+private fun PlayOrigin.scStubPlaylist(): com.olbyine.music.data.ScPlaylist? {
+    if (kind != "sc:playlist") return null
+    val playlistId = id.substringAfterLast(':').toLongOrNull() ?: return null
+    return com.olbyine.music.data.ScPlaylist(
+        id = playlistId,
+        title = title.ifBlank { "歌单" },
+        user = com.olbyine.music.data.ScUser(0, "", null),
+        artworkUrl = cover,
+        trackCount = 0,
+        album = false,
+    )
+}
+
+private fun PlayOrigin.ndStubAlbum(): com.olbyine.music.data.NdAlbum? {
+    if (kind != "nd:album" || id.isBlank()) return null
+    return com.olbyine.music.data.NdAlbum(
+        id = id,
+        name = title.ifBlank { "专辑" },
+        artist = "",
+        artistId = null,
+        coverArt = cover,
+        songCount = 0,
+        year = 0,
+        durationSec = 0L,
+        starred = false,
+    )
+}
+
+private fun PlayOrigin.ndStubPlaylist(): com.olbyine.music.data.NdPlaylist? {
+    if (kind != "nd:playlist" || id.isBlank()) return null
+    return com.olbyine.music.data.NdPlaylist(id = id, name = title.ifBlank { "歌单" }, songCount = 0, coverArt = cover, owner = "")
+}
+
+data class LibraryReveal(
+    val trackId: String,
+    val kind: String,
+    val id: String,
+)
+
+data class OnlineReveal(
+    val provider: String,
+    val trackId: String,
+    val title: String = "",
+    val artist: String = "",
+    val songId: Long = 0,
+    val scTrackId: Long = 0,
+    val scPlaylist: com.olbyine.music.data.ScPlaylist? = null,
+    val ndAlbum: com.olbyine.music.data.NdAlbum? = null,
+    val ndPlaylist: com.olbyine.music.data.NdPlaylist? = null,
+)
+
+data class CollectionResumePoint(
+    val songId: Long,
+    val title: String,
+    val positionMs: Long,
+    val at: Long,
+)
+
 data class TrackSortKeys(val title: String, val artist: String, val album: String) {
     fun forMode(mode: LibrarySortMode): String = when (mode) {
         LibrarySortMode.ARTIST -> artist
@@ -217,6 +286,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val artworkPaletteRepository = ArtworkPaletteRepository()
     private val savedPlayback = application.getSharedPreferences("native_playback", Application.MODE_PRIVATE)
     private val libraryPreferences = application.getSharedPreferences("native_library_view", Application.MODE_PRIVATE)
+
+    private val _trackReveal = MutableStateFlow<LibraryReveal?>(null)
+    val trackReveal: StateFlow<LibraryReveal?> = _trackReveal
+    private val _playOrigin = MutableStateFlow<PlayOrigin?>(null)
+    val playOrigin: StateFlow<PlayOrigin?> = _playOrigin
+    private val _appUpdate = MutableStateFlow<com.olbyine.music.data.AppUpdate?>(null)
+    val appUpdate: StateFlow<com.olbyine.music.data.AppUpdate?> = _appUpdate
+    private val _updateChecking = MutableStateFlow(false)
+    val updateChecking: StateFlow<Boolean> = _updateChecking
+    private val _onlineReveal = MutableStateFlow<OnlineReveal?>(null)
+    val onlineReveal: StateFlow<OnlineReveal?> = _onlineReveal
+    private val _collectionResume = MutableStateFlow<Map<String, CollectionResumePoint>>(emptyMap())
+    val collectionResume: StateFlow<Map<String, CollectionResumePoint>> = _collectionResume
+    private val _activeCollection = MutableStateFlow<String?>(null)
+    val activeCollection: StateFlow<String?> = _activeCollection
+    private var activeQueueIds: Set<String> = emptySet()
+    private var activeSongByTrack: Map<String, Long> = emptyMap()
+    private var activeCollectionAt = 0L
+    private var resumeWriteAt = 0L
 
     private val destination = MutableStateFlow(AppDestination.LIBRARY)
     private var returnDestination = AppDestination.LIBRARY
@@ -335,11 +423,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val parsedLyrics: StateFlow<LyricsDocument> = app.lyricsHub.document
 
     init {
+        _collectionResume.value = readResumePoints()
+        readActiveCollection()
+        if (settingsRepository.settings.value.autoUpdateCheck) checkForUpdates()
         restorePlaybackQueue()
         persistPlaybackPosition()
         processAutomaticLyricsQueue()
         observeArtworkColors()
         viewModelScope.launch { playback.state.map { it.currentMediaId }.distinctUntilChanged().collect { app.lyricsHub.setCurrent(it) } }
+        viewModelScope.launch {
+            playback.state.collect { state ->
+                val key = _activeCollection.value ?: return@collect
+                val ids = activeQueueIds
+                if (ids.isNotEmpty() && state.queueIds.isNotEmpty() && ids.none { it in state.queueIds } &&
+                    System.currentTimeMillis() - activeCollectionAt > 2_500L
+                ) {
+                    _activeCollection.value = null
+                    activeQueueIds = emptySet()
+                    activeSongByTrack = emptyMap()
+                    persistActiveCollection()
+                    return@collect
+                }
+                val mediaId = state.currentMediaId ?: return@collect
+                val songId = activeSongByTrack[mediaId] ?: return@collect
+                val previous = _collectionResume.value[key]
+                val changed = previous?.songId != songId
+                val now = System.currentTimeMillis()
+                if (!changed && now - resumeWriteAt < 3_000L) return@collect
+                resumeWriteAt = now
+                _collectionResume.value = _collectionResume.value + (key to CollectionResumePoint(
+                    songId = songId,
+                    title = state.currentTitle ?: previous?.title.orEmpty(),
+                    positionMs = state.positionMs.coerceAtLeast(0L),
+                    at = now,
+                ))
+                persistResumePoints()
+            }
+        }
     }
 
     fun navigateTo(value: AppDestination) {
@@ -374,6 +494,117 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setLibrarySortMode(value: LibrarySortMode) {
         sortMode.value = value
         libraryPreferences.edit().putString(KEY_SORT_MODE, value.name).apply()
+    }
+
+    fun setPlayOrigin(origin: PlayOrigin?) {
+        _playOrigin.value = origin
+        persistPlayOrigin(origin)
+    }
+
+    private fun persistPlayOrigin(origin: PlayOrigin?) {
+        val editor = savedPlayback.edit()
+        if (origin == null) {
+            editor.remove(KEY_ORIGIN_KIND).remove(KEY_ORIGIN_ID).remove(KEY_ORIGIN_TITLE).remove(KEY_ORIGIN_COVER).apply()
+            return
+        }
+        editor.putString(KEY_ORIGIN_KIND, origin.kind)
+            .putString(KEY_ORIGIN_ID, origin.id)
+            .putString(KEY_ORIGIN_TITLE, origin.title)
+            .putString(KEY_ORIGIN_COVER, origin.cover)
+            .apply()
+    }
+
+    private fun readPersistedOrigin(): PlayOrigin? {
+        val kind = savedPlayback.getString(KEY_ORIGIN_KIND, null)?.takeIf(String::isNotBlank) ?: return null
+        val id = savedPlayback.getString(KEY_ORIGIN_ID, null).orEmpty()
+        return PlayOrigin(
+            kind = kind,
+            id = id,
+            title = savedPlayback.getString(KEY_ORIGIN_TITLE, null).orEmpty(),
+            cover = savedPlayback.getString(KEY_ORIGIN_COVER, null),
+        )
+    }
+
+    fun revealInLibrary(track: Track) {
+        val origin = _playOrigin.value
+        if (!track.isOnline) {
+            val kind = origin?.kind?.takeIf { it == "folder" || it == "playlist" || it == "album" }
+            val id = origin?.id.orEmpty()
+            _trackReveal.value = LibraryReveal(track.id, kind ?: "folder", if (kind == null) "" else id)
+            navigateTo(AppDestination.LIBRARY)
+            return
+        }
+        when {
+            track.id.startsWith("ncm:") -> {
+                val songId = track.id.removePrefix("ncm:").toLongOrNull() ?: return
+                _onlineReveal.value = OnlineReveal(provider = "netease", trackId = track.id, songId = songId, title = track.title)
+                val originKind = origin?.kind
+                val originId = origin?.id?.toLongOrNull()
+                if ((originKind == "ncm:PLAYLIST" || originKind == "ncm:ALBUM" || originKind == "ncm:CHART" || originKind == "ncm:DAILY") && originId != null) {
+                    openNeteasePlaylist(
+                        com.olbyine.music.data.NeteasePlaylistSummary(
+                            originId,
+                            origin?.title.orEmpty(),
+                            origin?.cover,
+                            0,
+                            "",
+                            liked = false,
+                            own = false,
+                            kind = runCatching { com.olbyine.music.data.NeteaseCollectionKind.valueOf(originKind.removePrefix("ncm:")) }
+                                .getOrDefault(com.olbyine.music.data.NeteaseCollectionKind.PLAYLIST),
+                        ),
+                    )
+                    return
+                }
+                viewModelScope.launch {
+                    val albumId = runCatching { netease.song(songId)?.albumId?.takeIf { it > 0 } }.getOrNull()
+                    if (albumId == null) {
+                        _onlineReveal.value = null
+                        message.value = "这首歌没有可打开的专辑页"
+                    }
+                    if (albumId != null) {
+                        openNeteasePlaylist(
+                            com.olbyine.music.data.NeteasePlaylistSummary(
+                                albumId,
+                                "专辑",
+                                null,
+                                0,
+                                "",
+                                liked = false,
+                                own = false,
+                                kind = com.olbyine.music.data.NeteaseCollectionKind.ALBUM,
+                            ),
+                        )
+                    }
+                }
+            }
+            track.id.startsWith("sc:") -> {
+                val scId = track.id.removePrefix("sc:").toLongOrNull() ?: return
+                _onlineReveal.value = OnlineReveal(
+                    provider = "soundcloud",
+                    trackId = track.id,
+                    scTrackId = scId,
+                    title = track.title,
+                    scPlaylist = origin?.scPlaylist ?: origin?.scStubPlaylist(),
+                )
+            }
+            else -> _onlineReveal.value = OnlineReveal(
+                provider = "navidrome",
+                trackId = track.id,
+                title = track.title,
+                artist = track.artist,
+                ndAlbum = origin?.ndAlbum ?: origin?.ndStubAlbum(),
+                ndPlaylist = origin?.ndPlaylist ?: origin?.ndStubPlaylist(),
+            )
+        }
+    }
+
+    fun clearOnlineReveal() {
+        _onlineReveal.value = null
+    }
+
+    fun clearTrackReveal() {
+        _trackReveal.value = null
     }
 
     fun setLibraryFolderId(value: String?) {
@@ -545,6 +776,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setUsbMaxVolume(value: Int) = settingsRepository.setUsbMaxVolume(value)
     fun setNeteaseOnline(value: Boolean) = settingsRepository.setNeteaseOnline(value)
     fun setNeteaseQuality(value: String) = settingsRepository.setNeteaseQuality(value)
+
+    fun setAutoUpdateCheck(value: Boolean) {
+        settingsRepository.setAutoUpdateCheck(value)
+        if (value) checkForUpdates()
+    }
+
+    fun dismissAppUpdate() {
+        _appUpdate.value = null
+    }
+
+    fun checkForUpdates(manual: Boolean = false) {
+        if (_updateChecking.value) return
+        viewModelScope.launch {
+            _updateChecking.value = true
+            val result = runCatching { app.updateChecker.check() }
+            _updateChecking.value = false
+            result.onSuccess { update ->
+                _appUpdate.value = update
+                if (manual) message.value = if (update == null) "已是最新版本" else "发现新版本 ${update.version}"
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                if (manual) message.value = "检查更新失败：${error.message ?: "网络不可用"}"
+            }
+        }
+    }
 
     fun switchNeteaseQuality(value: String) {
         settingsRepository.setNeteaseQuality(value)
@@ -1125,8 +1381,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         navigateTo(AppDestination.NOW_PLAYING)
     }
 
-    fun playTracks(tracks: List<Track>, index: Int) {
+    fun playTracks(tracks: List<Track>, index: Int, origin: PlayOrigin? = null) {
         if (tracks.isEmpty() || index !in tracks.indices) return
+        val currentKind = _playOrigin.value?.kind
+        if (origin != null || currentKind == "folder" || currentKind == "playlist" || currentKind == "album") {
+            setPlayOrigin(origin)
+        }
         playback.playQueue(tracks, index)
         navigateTo(AppDestination.NOW_PLAYING)
     }
@@ -1630,8 +1890,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val navidrome: com.olbyine.music.data.NavidromeClient get() = app.navidrome
 
-    fun playNavidrome(songs: List<com.olbyine.music.data.NdSong>, index: Int, shuffle: Boolean) {
+    fun playNavidrome(
+        songs: List<com.olbyine.music.data.NdSong>,
+        index: Int,
+        shuffle: Boolean,
+        origin: PlayOrigin? = null,
+    ) {
         if (songs.isEmpty()) return
+        setPlayOrigin(origin)
         val tracks = runCatching { songs.map(app.navidrome::toTrack) }.getOrElse {
             showMessage(it.message ?: "无法播放")
             return
@@ -1694,7 +1960,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val soundCloud: com.olbyine.music.data.SoundCloudClient get() = app.soundCloud
 
-    fun playSoundCloud(tracks: List<com.olbyine.music.data.ScTrack>, index: Int, shuffle: Boolean = false) {
+    fun playSoundCloud(
+        tracks: List<com.olbyine.music.data.ScTrack>,
+        index: Int,
+        shuffle: Boolean = false,
+        origin: PlayOrigin? = null,
+    ) {
+        setPlayOrigin(origin)
         val chosen = tracks.getOrNull(index)
         val playable = tracks.filter { it.streamable }
         if (playable.isEmpty()) {
@@ -1710,28 +1982,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val neteaseClient: com.olbyine.music.data.NeteaseClient get() = app.netease
 
     fun openNeteasePlaylist(playlist: com.olbyine.music.data.NeteasePlaylistSummary) {
-        val songs: suspend () -> List<com.olbyine.music.data.NeteaseSong> = when (playlist.kind) {
-            com.olbyine.music.data.NeteaseCollectionKind.ALBUM -> { { netease.albumSongs(playlist.id) } }
-            com.olbyine.music.data.NeteaseCollectionKind.ARTIST -> { { netease.artistTopSongs(playlist.id) } }
-            com.olbyine.music.data.NeteaseCollectionKind.DAILY -> { { netease.dailySongs() } }
-            else -> { { netease.playlistSongs(playlist.id) } }
-        }
         val cached = playlist.kind == com.olbyine.music.data.NeteaseCollectionKind.PLAYLIST ||
             playlist.kind == com.olbyine.music.data.NeteaseCollectionKind.CHART
-        openNeteaseCollection(playlist, songs, cached)
+        openNeteaseCollection(playlist, cached)
     }
 
     fun openNeteaseCollection(
         playlist: com.olbyine.music.data.NeteasePlaylistSummary,
-        load: suspend () -> List<com.olbyine.music.data.NeteaseSong>,
         cached: Boolean = false,
     ) {
-        _netease.value = _netease.value.copy(openPlaylist = playlist, songs = emptyList(), songsLoading = true, message = null, localMatches = emptyMap())
+        _netease.value = _netease.value.copy(openPlaylist = playlist, songs = emptyList(), songsLoading = true, songsPartial = false, message = null, localMatches = emptyMap())
         neteaseJob?.cancel()
         neteaseJob = viewModelScope.launch {
-            suspend fun show(songs: List<com.olbyine.music.data.NeteaseSong>, loading: Boolean) {
+            suspend fun show(songs: List<com.olbyine.music.data.NeteaseSong>, loading: Boolean, partial: Boolean = false) {
                 if (_netease.value.openPlaylist?.id != playlist.id) return
-                _netease.value = _netease.value.copy(songs = songs, songsLoading = loading)
+                _netease.value = _netease.value.copy(songs = songs, songsLoading = loading, songsPartial = partial)
                 val matches = withContext(Dispatchers.Default) {
                     matchSongs(songs.map { RemoteSong(it.id.toString(), it.title, it.artists, it.album, it.durationMs, it.coverUrl) }, library.tracks.value)
                         .mapKeys { it.key.toLong() }
@@ -1741,8 +2006,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val saved = if (cached) netease.cachedSongs(playlist.id) else null
                 if (!saved.isNullOrEmpty()) show(saved, loading = false)
-                val songs = load()
-                if (saved != songs) show(songs, loading = false)
+                var best = saved.orEmpty()
+                netease.collectionStream(playlist).collect { batch ->
+                    if (!batch.complete && batch.songs.size < best.size) return@collect
+                    best = batch.songs
+                    val summary = batch.summary.copy(
+                        kind = playlist.kind,
+                        liked = playlist.liked || batch.summary.liked,
+                        own = playlist.own,
+                        name = batch.summary.name.ifBlank { playlist.name },
+                        coverUrl = batch.summary.coverUrl ?: playlist.coverUrl,
+                    )
+                    if (_netease.value.openPlaylist?.id == playlist.id) {
+                        _netease.value = _netease.value.copy(openPlaylist = summary)
+                    }
+                    show(batch.songs, loading = false, partial = batch.songs.size < summary.trackCount)
+                }
+                if (_netease.value.openPlaylist?.id == playlist.id) _netease.value = _netease.value.copy(songsPartial = false)
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 _netease.value = _netease.value.copy(songsLoading = false, message = error.message ?: "读取歌单失败")
@@ -1799,7 +2079,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _netease.value = _netease.value.copy(openPlaylist = null, songs = emptyList(), songsLoading = false)
     }
 
-    fun playNeteaseSongs(songs: List<com.olbyine.music.data.NeteaseSong>, index: Int, shuffle: Boolean = false) {
+    fun playNeteaseSongs(
+        songs: List<com.olbyine.music.data.NeteaseSong>,
+        index: Int,
+        shuffle: Boolean = false,
+        source: String? = null,
+        startMs: Long = 0L,
+    ) {
         val state = _netease.value
         val online = settingsRepository.settings.value.neteaseOnline
         val local = library.tracks.value.associateBy(Track::id)
@@ -1817,8 +2103,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             queue.indexOfFirst { it.id == (state.localMatches[song.id] ?: com.olbyine.music.data.NeteaseSong.trackId(song.id)) }
         }?.takeIf { it >= 0 } ?: 0
         if (shuffle && !uiState.value.playback.shuffleEnabled) playback.toggleShuffle()
+        _activeCollection.value = source
+        setPlayOrigin(
+            source?.let { key ->
+                val parts = key.split(":")
+                if (parts.size >= 3) {
+                    val open = _netease.value.openPlaylist
+                    PlayOrigin(
+                        kind = parts[0] + ":" + parts[1],
+                        id = parts[2],
+                        title = open?.name.orEmpty(),
+                        cover = open?.coverUrl,
+                    )
+                } else null
+            },
+        )
+        activeQueueIds = if (source == null) emptySet() else queue.map(Track::id).toSet()
+        activeSongByTrack = if (source == null) emptyMap() else songs.mapNotNull { song ->
+            (state.localMatches[song.id] ?: com.olbyine.music.data.NeteaseSong.trackId(song.id)).let { it to song.id }
+        }.toMap()
+        activeCollectionAt = System.currentTimeMillis()
+        persistActiveCollection()
         playback.playQueue(queue, if (shuffle) queue.indices.random() else start)
+        if (startMs > 1_000L) viewModelScope.launch {
+            delay(700)
+            playback.seekTo(startMs)
+        }
         navigateTo(AppDestination.NOW_PLAYING)
+    }
+
+    fun resumeNeteaseCollection(key: String, songs: List<com.olbyine.music.data.NeteaseSong>) {
+        val point = _collectionResume.value[key] ?: return
+        if (songs.isEmpty()) return
+        val index = songs.indexOfFirst { it.id == point.songId }
+        if (index < 0) playNeteaseSongs(songs, 0, source = key)
+        else playNeteaseSongs(songs, index, source = key, startMs = point.positionMs)
     }
 
     fun toggleNeteaseLike(id: Long) {
@@ -2130,6 +2449,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setLyricFontSize(value: Float) = settingsRepository.setLyricFontSize(value)
     fun setLyricOpacity(value: Float) = settingsRepository.setLyricInactiveOpacity(value)
     fun setLyricOffset(value: Long) = settingsRepository.setLyricOffsetMs(value)
+
+    fun setLyricAlignPosition(value: Float) = settingsRepository.setLyricAlignPosition(value)
     fun setHapticsEnabled(value: Boolean) = settingsRepository.setHapticsEnabled(value)
     fun setStatusBarLyricsEnabled(value: Boolean) = settingsRepository.setStatusBarLyricsEnabled(value)
     fun setAutomaticLyricsEnabled(value: Boolean) = settingsRepository.setAutomaticLyricsEnabled(value)
@@ -2142,41 +2463,188 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         message.value = null
     }
 
-    private fun restorePlaybackQueue() {
-        viewModelScope.launch {
-            combine(library.loaded, library.tracks, playback.state) { loaded, tracks, player ->
-                Triple(loaded, tracks, player)
-            }.filter { (loaded, _, player) -> loaded && player.connected }.first().let { (_, tracks, player) ->
-                if (player.mediaItemCount != 0 || tracks.isEmpty()) return@let
-                val savedId = savedPlayback.getString(KEY_MEDIA_ID, null) ?: return@let
-                val savedIds = savedPlayback.getString(KEY_QUEUE, null)
-                    ?.split(',')
-                    ?.filter(String::isNotBlank)
-                    .orEmpty()
-                val byId = tracks.associateBy(Track::id)
-                val restoredQueue = savedIds.mapNotNull(byId::get).ifEmpty { tracks }
-                val index = restoredQueue.indexOfFirst { it.id == savedId }
-                if (index >= 0) playback.restoreQueue(
-                    restoredQueue,
-                    index,
-                    savedPlayback.getLong(KEY_POSITION, 0L),
+    private fun persistResumePoints() {
+        val rows = org.json.JSONObject()
+        _collectionResume.value.forEach { (key, point) ->
+            rows.put(
+                key,
+                org.json.JSONObject()
+                    .put("songId", point.songId)
+                    .put("title", point.title)
+                    .put("positionMs", point.positionMs)
+                    .put("at", point.at),
+            )
+        }
+        savedPlayback.edit().putString(KEY_RESUME_POINTS, rows.toString()).apply()
+    }
+
+    private fun readResumePoints(): Map<String, CollectionResumePoint> {
+        val raw = savedPlayback.getString(KEY_RESUME_POINTS, null)?.takeIf(String::isNotBlank) ?: return emptyMap()
+        return runCatching {
+            val rows = org.json.JSONObject(raw)
+            rows.keys().asSequence().mapNotNull { key ->
+                val row = rows.optJSONObject(key) ?: return@mapNotNull null
+                val songId = row.optLong("songId", 0L)
+                if (songId <= 0L) return@mapNotNull null
+                key to CollectionResumePoint(
+                    songId = songId,
+                    title = row.optString("title"),
+                    positionMs = row.optLong("positionMs", 0L),
+                    at = row.optLong("at", 0L),
                 )
-            }
+            }.toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun persistActiveCollection() {
+        val key = _activeCollection.value
+        val editor = savedPlayback.edit()
+        if (key == null) {
+            editor.remove(KEY_ACTIVE_COLLECTION).remove(KEY_ACTIVE_QUEUE).remove(KEY_ACTIVE_SONG_MAP).apply()
+            return
+        }
+        val map = org.json.JSONObject()
+        activeSongByTrack.forEach { (track, song) -> map.put(track, song) }
+        editor.putString(KEY_ACTIVE_COLLECTION, key)
+            .putString(KEY_ACTIVE_QUEUE, activeQueueIds.joinToString(","))
+            .putString(KEY_ACTIVE_SONG_MAP, map.toString())
+            .apply()
+    }
+
+    private fun readActiveCollection() {
+        val key = savedPlayback.getString(KEY_ACTIVE_COLLECTION, null)?.takeIf(String::isNotBlank) ?: return
+        _activeCollection.value = key
+        activeQueueIds = savedPlayback.getString(KEY_ACTIVE_QUEUE, null)
+            ?.split(',')
+            ?.filter(String::isNotBlank)
+            ?.toSet()
+            .orEmpty()
+        activeSongByTrack = runCatching {
+            val raw = savedPlayback.getString(KEY_ACTIVE_SONG_MAP, null)?.takeIf(String::isNotBlank) ?: return@runCatching emptyMap()
+            val rows = org.json.JSONObject(raw)
+            rows.keys().asSequence().mapNotNull { track -> rows.optLong(track, 0L).takeIf { it > 0L }?.let { track to it } }.toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun restorePlaybackQueue() {
+        _playOrigin.value = readPersistedOrigin()
+        viewModelScope.launch {
+            playback.state.filter { it.connected }.first()
+            if (playback.state.value.mediaItemCount != 0) return@launch
+            val savedId = savedPlayback.getString(KEY_MEDIA_ID, null) ?: return@launch
+            val stored = decodeQueue(savedPlayback.getString(KEY_QUEUE_JSON, null))
+            val byId = library.tracks.value.associateBy(Track::id)
+            val restored = stored.map { byId[it.id] ?: it }
+            if (restored.isEmpty()) return@launch
+            onlineTracks.value = onlineTracks.value + restored.filter(Track::isOnline).associateBy(Track::id)
+            val index = restored.indexOfFirst { it.id == savedId }
+            if (index < 0) return@launch
+            playback.restoreQueue(restored, index, savedPlayback.getLong(KEY_POSITION, 0L))
         }
     }
 
     private fun persistPlaybackPosition() {
         viewModelScope.launch {
-            playback.positionUpdates(2_000L).collect { position ->
-                val state = playback.state.value
+            var lastQueueSignature = ""
+            playback.state.collect { state ->
                 val id = state.currentMediaId ?: return@collect
-                savedPlayback.edit()
-                    .putString(KEY_MEDIA_ID, id)
-                    .putLong(KEY_POSITION, position)
-                    .putString(KEY_QUEUE, state.queueIds.joinToString(","))
-                    .apply()
+                val editor = savedPlayback.edit().putString(KEY_MEDIA_ID, id)
+                val signature = state.queueIds.joinToString(",")
+                if (signature != lastQueueSignature) {
+                    val known = onlineTracks.value + library.tracks.value.associateBy(Track::id)
+                    val queue = state.queueIds.mapNotNull(known::get)
+                    if (queue.isNotEmpty()) {
+                        editor.putString(KEY_QUEUE_JSON, encodeQueue(queue))
+                        lastQueueSignature = signature
+                    }
+                }
+                if (state.positionMs > 0L) editor.putLong(KEY_POSITION, state.positionMs)
+                editor.apply()
             }
         }
+        viewModelScope.launch {
+            playback.positionUpdates(2_000L).collect { position ->
+                savedPlayback.edit().putLong(KEY_POSITION, position).apply()
+            }
+        }
+    }
+
+    private fun encodeQueue(tracks: List<Track>): String {
+        val rows = org.json.JSONArray()
+        tracks.forEach { track ->
+            rows.put(
+                org.json.JSONObject()
+                    .put("id", track.id)
+                    .put("uri", track.uri)
+                    .put("title", track.title)
+                    .put("artist", track.artist)
+                    .put("album", track.album)
+                    .put("durationMs", track.durationMs)
+                    .put("displayName", track.displayName)
+                    .put("mimeType", track.mimeType)
+                    .put("sizeBytes", track.sizeBytes)
+                    .put("coverPath", track.coverPath)
+                    .put("favorite", track.favorite)
+                    .put("addedAt", track.addedAt)
+                    .put("folderId", track.folderId)
+                    .put("folderPath", track.folderPath)
+                    .put("trackNumber", track.trackNumber)
+                    .put("discNumber", track.discNumber)
+                    .put("year", track.year)
+                    .put("albumArtist", track.albumArtist)
+                    .put("sampleRate", track.sampleRate)
+                    .put("bitsPerSample", track.bitsPerSample)
+                    .put("bitrate", track.bitrate)
+                    .put("artworkUrl", track.artworkUrl),
+            )
+        }
+        return rows.toString()
+    }
+
+    private fun decodeQueue(raw: String?): List<Track> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val rows = org.json.JSONArray(raw)
+            (0 until rows.length()).mapNotNull { index ->
+                val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                val id = row.optString("id").takeIf(String::isNotBlank) ?: return@mapNotNull null
+                val uri = row.optString("uri").takeIf(String::isNotBlank) ?: return@mapNotNull null
+                Track(
+                    id = id,
+                    uri = uri,
+                    title = row.optString("title"),
+                    artist = row.optString("artist"),
+                    album = row.optString("album"),
+                    durationMs = row.optLong("durationMs"),
+                    displayName = row.optString("displayName"),
+                    mimeType = row.optString("mimeType").takeIf(String::isNotBlank),
+                    sizeBytes = row.optLong("sizeBytes"),
+                    coverPath = row.optString("coverPath").takeIf(String::isNotBlank),
+                    lyrics = null,
+                    wordLyrics = null,
+                    translationLyrics = null,
+                    romanLyrics = null,
+                    lyricsSource = null,
+                    lyricsFormat = null,
+                    lyricsConfidence = null,
+                    lyricsInstrumental = false,
+                    lyricsLookupAt = 0L,
+                    lyricsLookupStatus = null,
+                    favorite = row.optBoolean("favorite"),
+                    addedAt = row.optLong("addedAt"),
+                    folderId = row.optString("folderId").takeIf(String::isNotBlank),
+                    folderPath = row.optString("folderPath").takeIf(String::isNotBlank),
+                    trackNumber = row.optInt("trackNumber"),
+                    discNumber = row.optInt("discNumber"),
+                    year = row.optInt("year"),
+                    albumArtist = row.optString("albumArtist").takeIf(String::isNotBlank),
+                    sampleRate = row.optInt("sampleRate"),
+                    bitsPerSample = row.optInt("bitsPerSample"),
+                    bitrate = row.optInt("bitrate"),
+                    artworkUrl = row.optString("artworkUrl").takeIf(String::isNotBlank),
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun enqueueAutomaticLyrics(existingTrackIds: Set<String>) {
@@ -2363,6 +2831,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val KEY_MEDIA_ID = "media_id"
         const val KEY_POSITION = "position"
         const val KEY_QUEUE = "queue"
+    const val KEY_QUEUE_JSON = "queue_json"
+    const val KEY_ORIGIN_KIND = "origin_kind"
+    const val KEY_ORIGIN_ID = "origin_id"
+    const val KEY_ORIGIN_TITLE = "origin_title"
+    const val KEY_ORIGIN_COVER = "origin_cover"
+    const val KEY_RESUME_POINTS = "resume_points"
+    const val KEY_ACTIVE_COLLECTION = "active_collection"
+    const val KEY_ACTIVE_QUEUE = "active_queue_ids"
+    const val KEY_ACTIVE_SONG_MAP = "active_song_map"
         const val KEY_VIEW_MODE = "view_mode"
         const val KEY_SORT_MODE = "sort_mode"
         const val NOT_FOUND_RETRY_MS = 6 * 60 * 60_000L
