@@ -342,10 +342,11 @@ section { scroll-margin-top: 92px; }
 /* ============================================================
    FAB
    ============================================================ */
-.fab { position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); z-index: 50; display: inline-flex; align-items: center; gap: 10px; height: 56px; padding: 0 22px; border-radius: var(--shape-m); background: var(--md-primary-container); color: var(--md-on-primary-container); text-decoration: none; font-weight: 600; box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--md-primary) 55%, transparent); transform: translateY(24px) scale(0.9); opacity: 0; pointer-events: none; transition: transform 320ms var(--ease-spring), opacity 220ms var(--ease-standard), border-radius 320ms var(--ease-spring); }
+.fab { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); z-index: 50; display: inline-flex; align-items: center; gap: 10px; height: 56px; max-width: calc(100vw - 32px); padding: 0 20px; border-radius: var(--shape-m); white-space: nowrap; background: var(--md-primary-container); color: var(--md-on-primary-container); text-decoration: none; font-weight: 600; box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--md-primary) 55%, transparent); transform: translateY(24px) scale(0.9); opacity: 0; pointer-events: none; transition: transform 320ms var(--ease-spring), opacity 220ms var(--ease-standard), border-radius 320ms var(--ease-spring); }
 .fab.show { transform: none; opacity: 1; pointer-events: auto; }
 .fab:hover { border-radius: var(--shape-l); }
-.fab svg { width: 20px; height: 20px; }
+.fab svg { width: 20px; height: 20px; flex: none; }
+.fab__label--short { display: none; }
 
 /* ============================================================
    Footer
@@ -371,6 +372,10 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
 }
 @media (max-width: 700px) {
   :root { --page: min(1180px, 100% - 28px); }
+  .fab { height: 48px; padding: 0 14px; gap: 7px; font-size: 14px; border-radius: 14px; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .fab svg { width: 18px; height: 18px; }
+  .fab__label--full { display: none; }
+  .fab__label--short { display: inline; }
   .nav-chips { display: none; }
   .grid--3, .grid--6 { grid-template-columns: 1fr; }
   .grid--6 .card:last-child { grid-column: auto; }
@@ -380,6 +385,10 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
   .seg__btn { padding: 12px 14px; font-size: 13.5px; }
   .strip { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 14px; }
 }
+@media (max-width: 380px) {
+  .fab { font-size: 13.5px; padding: 0 14px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   [data-reveal] { opacity: 1; transform: none; }
@@ -638,9 +647,10 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
 
 </main>
 
-<a class="fab" id="fab" href="https://github.com/Huliang2597/olbyine-music/releases/tag/v1.1">
+<a class="fab" id="fab" href="https://github.com/Huliang2597/olbyine-music/releases/tag/v1.1" aria-label="下载 Olbyine 1.1">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
-  下载 1.1
+  <span class="fab__label fab__label--full">下载 1.1</span>
+  <span class="fab__label fab__label--short" aria-hidden="true">下载</span>
 </a>
 
 <footer>
