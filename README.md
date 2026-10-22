@@ -7,7 +7,7 @@
 
 Olbyine 是一个 Android 本地与流媒体音乐播放器，使用 Kotlin、Jetpack Compose 和 AndroidX Media3 构建。
 
-Android 10+ · arm64-v8a / armeabi-v7a · AGPL-3.0
+Android 10+ · arm64-v8a · AGPL-3.0
 
 ## 下载
 
