@@ -441,6 +441,29 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
   .loop__track { flex-wrap: wrap; width: auto; }
   .loop__track [aria-hidden="true"] { display: none; }
 }
+
+/* ============================================================
+   Releases
+   ============================================================ */
+.releases { display: grid; gap: 10px; }
+.release { background: var(--md-surface-container-low); border-radius: var(--shape-l); overflow: hidden; }
+.release > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: center; padding: 16px 20px; }
+.release > summary::-webkit-details-marker { display: none; }
+.release__tag { font: 650 16px/1.35 var(--font); color: var(--md-on-surface); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.release__badge { font: 600 11.5px/1 var(--font); padding: 5px 9px; border-radius: var(--shape-full); background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.release__meta { font-size: 13px; color: var(--md-on-surface-variant); grid-column: 1; }
+.release__get { grid-row: 1 / span 2; grid-column: 2; font: 600 13.5px/1 var(--font); color: var(--md-primary); text-decoration: none; padding: 10px 14px; border-radius: var(--shape-full); background: var(--md-surface-container-high); white-space: nowrap; }
+.release__body { padding: 2px 20px 18px; font-size: 14.5px; line-height: 1.65; color: var(--md-on-surface-variant); }
+.release__body h3 { font-size: 14px; margin: 14px 0 6px; color: var(--md-on-surface); }
+.release__body h3:first-child { margin-top: 0; }
+.release__body ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.release__body strong { color: var(--md-on-surface); font-weight: 650; }
+.release__body code { font-family: var(--mono); font-size: 12.5px; padding: 1px 5px; border-radius: 6px; background: var(--md-surface-container-high); color: var(--md-on-surface); }
+.release__empty { font-size: 14.5px; color: var(--md-on-surface-variant); }
+@media (max-width: 640px) {
+  .release > summary { grid-template-columns: minmax(0, 1fr); }
+  .release__get { grid-row: auto; grid-column: 1; justify-self: start; margin-top: 6px; }
+}
 </style>
 </head>
 <body>
@@ -456,6 +479,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
       <a href="#library">音乐库</a>
       <a href="#lyrics">歌词</a>
       <a href="#styles">界面风格</a>
+      <a href="#releases">更新日志</a>
       <a href="#install">安装</a>
       <a href="#credits">开源致谢</a>
     </nav>
@@ -471,6 +495,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
   <a href="#lyrics">歌词</a>
   <a href="#styles">界面风格</a>
   <a href="#sound">声音</a>
+  <a href="#releases">更新</a>
   <a href="#install">安装</a>
   <a href="#credits">致谢</a>
 </nav>
@@ -479,13 +504,13 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
 
   <section class="wrap hero">
     <div class="hero__copy">
-      <span class="chip chip--assist" data-reveal><span class="chip__dot"></span>v1.1 已发布</span>
+      <span class="chip chip--assist" data-reveal><span class="chip__dot"></span><span id="latest-tag">正在读取版本…</span></span>
       <h1 class="display-large" data-reveal style="--d:40ms">一个播放器<br>听所有的歌</h1>
       <p class="lead body-large" data-reveal style="--d:100ms">本地音乐、网易云音乐、洛雪音乐、SoundCloud、Navidrome 与 WebDAV，共用同一个播放队列。歌词逐字显示，界面可选四种风格。</p>
       <div class="hero__actions" data-reveal style="--d:160ms">
-        <a class="btn btn--filled layer" href="https://github.com/Huliang2597/olbyine-music/releases/tag/v1.1">
+        <a class="btn btn--filled layer" id="download" href="https://github.com/Huliang2597/olbyine-music/releases/latest">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
-          下载 Olbyine 1.1 <small>7.4 MB</small>
+          下载 Olbyine <span id="dl-ver"></span> <small id="dl-size"></small>
         </a>
         <a class="btn btn--tonal layer" href="https://github.com/Huliang2597/olbyine-music">
           查看源码
@@ -523,7 +548,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
       <div class="stat" data-reveal style="--d:60ms"><b data-count="4">4</b><span>界面风格</span></div>
       <div class="stat" data-reveal style="--d:120ms"><b data-count="80" data-suffix="+">80+</b><span>每种风格的图标</span></div>
       <div class="stat" data-reveal style="--d:180ms"><b data-count="29">29</b><span>参考的开源项目</span></div>
-      <div class="stat" data-reveal style="--d:240ms"><b data-count="7.4" data-decimals="1" data-suffix=" MB">7.4 MB</b><span>安装包大小</span></div>
+      <div class="stat" data-reveal style="--d:240ms"><b id="stat-size" data-count="7.4" data-decimals="1" data-suffix=" MB">7.4 MB</b><span>安装包大小</span></div>
     </div>
   </div>
 
@@ -662,6 +687,20 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
     </div>
   </section>
 
+  <section class="wrap section" id="releases">
+    <div class="section__head">
+      <div>
+        <div class="eyebrow">Releases</div>
+        <h2 class="headline-large" data-reveal>更新日志</h2>
+      </div>
+      <a class="btn btn--text layer" href="https://github.com/Huliang2597/olbyine-music/releases">全部版本</a>
+    </div>
+    <p class="intro" data-reveal style="--d:60ms">版本号、安装包、更新内容都直接读取 GitHub 发布页，新版本发布后这里会自动同步。</p>
+    <div class="releases" id="releaseList" data-reveal style="--d:100ms">
+      <div class="release"><div class="release__body"><p class="release__empty">正在读取最新版本…</p></div></div>
+    </div>
+  </section>
+
   <section class="wrap section" id="install">
     <div class="section__head">
       <div>
@@ -671,7 +710,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
     </div>
     <div class="install">
       <ol class="steps">
-        <li data-reveal><span>在 GitHub 发布页下载 <b>Olbyine-1.1-release.apk</b>。</span></li>
+        <li data-reveal><span>在 GitHub 发布页下载 <b id="apk-name">最新安装包</b>。</span></li>
         <li data-reveal style="--d:60ms"><span>打开安装包，按提示允许安装未知来源应用。</span></li>
         <li data-reveal style="--d:120ms"><span>打开应用，导入本地音乐，或在“流媒体”里登录账号、连接服务器。</span></li>
       </ol>
@@ -681,7 +720,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
           <p><strong>可选权限：</strong>悬浮窗用于桌面歌词，通知读取用于显示其他播放器的歌词。不开也能正常播放。</p>
         </div>
         <div class="hashes">
-          <div class="hash"><span>安装包 SHA-256</span><code id="h-apk">7cb08d4f3e5a952df9363e836cca9bde642a11e468e6604283fa93d9eabc0fb8</code><button class="copy layer" type="button" data-target="h-apk"><span class="idle">复制</span><span class="done">已复制</span></button></div>
+          <div class="hash"><span>安装包 SHA-256</span><code id="h-apk">读取中…</code><button class="copy layer" type="button" data-target="h-apk"><span class="idle">复制</span><span class="done">已复制</span></button></div>
           <div class="hash"><span>签名证书 SHA-256</span><code id="h-cert">36bfc68b255d0efd03e441e9ac19cb4b277bdc5160b14a98e46c66bf50332f9e</code><button class="copy layer" type="button" data-target="h-cert"><span class="idle">复制</span><span class="done">已复制</span></button></div>
         </div>
       </div>
@@ -921,6 +960,170 @@ const ICONS = {"ios":{"PREV":{"s":56,"p":[["M 25.1218 44.5009 C 26.7084 44.5009 
       else select();
     });
   });
+})();
+</script>
+<script>
+(function () {
+  const REPO = "Huliang2597/olbyine-music";
+  const API = "https://api.github.com/repos/" + REPO + "/releases?per_page=30";
+  const CACHE_KEY = "olbyine.releases.v1";
+  const CACHE_TTL = 30 * 60 * 1000;
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const mb = (bytes) => (bytes ? (bytes / 1048576).toFixed(1) + " MB" : "");
+  const day = (iso) => {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  };
+
+  function inline(s) {
+    return esc(s)
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+  }
+
+  function markdown(src) {
+    const out = [];
+    let list = null;
+    const closeList = () => { if (list) { out.push("</ul>"); list = null; } };
+    String(src || "").split(/\r?\n/).forEach((raw) => {
+      const line = raw.trim();
+      if (!line) { closeList(); return; }
+      const h = line.match(/^#{2,4}\s+(.*)$/);
+      if (h) {
+        closeList();
+        const text = h[1].trim();
+        if (/^Olbyine\s+\S+$/i.test(text)) return;
+        out.push("<h3>" + inline(text) + "</h3>");
+        return;
+      }
+      const li = line.match(/^[-*]\s+(.*)$/);
+      if (li) {
+        if (!list) { out.push("<ul>"); list = true; }
+        out.push("<li>" + inline(li[1]) + "</li>");
+        return;
+      }
+      closeList();
+      out.push("<p>" + inline(line) + "</p>");
+    });
+    closeList();
+    return out.join("");
+  }
+
+  function pickApk(release) {
+    return (release.assets || []).find((a) => /\.apk$/i.test(a.name)) || null;
+  }
+
+  function renderLatest(releases) {
+    const latest = releases.find((r) => !r.draft && !r.prerelease) || releases[0];
+    if (!latest) return;
+    const version = (latest.tag_name || "").replace(/^v/i, "");
+    const apk = pickApk(latest);
+    const sizeText = apk ? mb(apk.size) : "";
+
+    const tag = document.getElementById("latest-tag");
+    if (tag) tag.textContent = "v" + version + " 已发布";
+
+    const ver = document.getElementById("dl-ver");
+    if (ver) ver.textContent = version;
+    const size = document.getElementById("dl-size");
+    if (size) size.textContent = sizeText;
+
+    const dl = document.getElementById("download");
+    if (dl) dl.href = apk ? apk.browser_download_url : latest.html_url;
+
+    const apkName = document.getElementById("apk-name");
+    if (apkName && apk) apkName.textContent = apk.name;
+
+    const hash = document.getElementById("h-apk");
+    if (hash) hash.textContent = apk && apk.digest ? apk.digest.replace(/^sha256:/i, "") : "以发布页为准";
+
+    const stat = document.getElementById("stat-size");
+    if (stat && apk) {
+      const value = (apk.size / 1048576).toFixed(1);
+      stat.dataset.count = value;
+      stat.dataset.decimals = "1";
+      stat.dataset.suffix = " MB";
+      stat.textContent = value + " MB";
+    }
+  }
+
+  function renderList(releases) {
+    const box = document.getElementById("releaseList");
+    if (!box) return;
+    const list = releases.filter((r) => !r.draft);
+    if (!list.length) {
+      box.innerHTML = '<div class="release"><div class="release__body"><p class="release__empty">暂时读取不到发布记录，请前往 GitHub 发布页查看。</p></div></div>';
+      return;
+    }
+    const latestTag = list[0].tag_name;
+    box.innerHTML = list.map((r, i) => {
+      const version = (r.tag_name || "").replace(/^v/i, "");
+      const apk = pickApk(r);
+      const badge = i === 0 ? '<span class="release__badge">最新</span>' : "";
+      const meta = [day(r.published_at), apk ? mb(apk.size) : ""].filter(Boolean).join(" · ");
+      const link = apk ? apk.browser_download_url : r.html_url;
+      return '<details class="release"' + (i === 0 ? " open" : "") + '>' +
+        '<summary>' +
+          '<span class="release__tag">' + esc(r.tag_name || version) + badge + '</span>' +
+          '<span class="release__meta">' + esc(meta) + '</span>' +
+          '<a class="release__get" href="' + esc(link) + '">下载</a>' +
+        '</summary>' +
+        '<div class="release__body">' + (markdown(r.body) || '<p class="release__empty">这个版本没有写更新说明。</p>') + '</div>' +
+      '</details>';
+    }).join("");
+  }
+
+  function apply(releases) {
+    try {
+      renderLatest(releases);
+      renderList(releases);
+    } catch (e) {
+      console.warn("render releases failed", e);
+    }
+  }
+
+  function cached() {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || !data.at || !Array.isArray(data.releases)) return null;
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function save(releases) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), releases: releases }));
+    } catch (e) {}
+  }
+
+  const hit = cached();
+  if (hit) apply(hit.releases);
+
+  const fresh = !hit || Date.now() - hit.at > CACHE_TTL;
+  if (!fresh) return;
+
+  fetch(API, { headers: { Accept: "application/vnd.github+json" } })
+    .then((res) => (res.ok ? res.json() : Promise.reject(res.status)))
+    .then((data) => {
+      if (!Array.isArray(data) || !data.length) throw new Error("empty");
+      save(data);
+      apply(data);
+    })
+    .catch(() => {
+      if (!hit) {
+        const box = document.getElementById("releaseList");
+        if (box) box.innerHTML = '<div class="release"><div class="release__body"><p class="release__empty">暂时读取不到发布记录，<a href="https://github.com/' + REPO + '/releases">前往 GitHub 发布页</a> 查看。</p></div></div>';
+        const tag = document.getElementById("latest-tag");
+        if (tag) tag.textContent = "GitHub 发布页";
+      }
+    });
 })();
 </script>
 </body>
