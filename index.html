@@ -510,7 +510,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
       <div class="hero__actions" data-reveal style="--d:160ms">
         <a class="btn btn--filled layer" id="download" href="https://github.com/Huliang2597/olbyine-music/releases/latest">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
-          下载 Olbyine <span id="dl-ver"></span> <small id="dl-size"></small>
+          下载 Olbyine <span id="dl-ver"></span>
         </a>
         <a class="btn btn--tonal layer" href="https://github.com/Huliang2597/olbyine-music">
           查看源码
@@ -548,7 +548,6 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
       <div class="stat" data-reveal style="--d:60ms"><b data-count="4">4</b><span>界面风格</span></div>
       <div class="stat" data-reveal style="--d:120ms"><b data-count="80" data-suffix="+">80+</b><span>每种风格的图标</span></div>
       <div class="stat" data-reveal style="--d:180ms"><b data-count="29">29</b><span>参考的开源项目</span></div>
-      <div class="stat" data-reveal style="--d:240ms"><b id="stat-size" data-count="7.4" data-decimals="1" data-suffix=" MB">7.4 MB</b><span>安装包大小</span></div>
     </div>
   </div>
 
@@ -970,7 +969,6 @@ const ICONS = {"ios":{"PREV":{"s":56,"p":[["M 25.1218 44.5009 C 26.7084 44.5009 
   const CACHE_TTL = 30 * 60 * 1000;
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const mb = (bytes) => (bytes ? (bytes / 1048576).toFixed(1) + " MB" : "");
   const day = (iso) => {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return "";
@@ -1021,16 +1019,12 @@ const ICONS = {"ios":{"PREV":{"s":56,"p":[["M 25.1218 44.5009 C 26.7084 44.5009 
     if (!latest) return;
     const version = (latest.tag_name || "").replace(/^v/i, "");
     const apk = pickApk(latest);
-    const sizeText = apk ? mb(apk.size) : "";
 
     const tag = document.getElementById("latest-tag");
     if (tag) tag.textContent = "v" + version + " 已发布";
 
     const ver = document.getElementById("dl-ver");
     if (ver) ver.textContent = version;
-    const size = document.getElementById("dl-size");
-    if (size) size.textContent = sizeText;
-
     const dl = document.getElementById("download");
     if (dl) dl.href = apk ? apk.browser_download_url : latest.html_url;
 
@@ -1040,14 +1034,6 @@ const ICONS = {"ios":{"PREV":{"s":56,"p":[["M 25.1218 44.5009 C 26.7084 44.5009 
     const hash = document.getElementById("h-apk");
     if (hash) hash.textContent = apk && apk.digest ? apk.digest.replace(/^sha256:/i, "") : "以发布页为准";
 
-    const stat = document.getElementById("stat-size");
-    if (stat && apk) {
-      const value = (apk.size / 1048576).toFixed(1);
-      stat.dataset.count = value;
-      stat.dataset.decimals = "1";
-      stat.dataset.suffix = " MB";
-      stat.textContent = value + " MB";
-    }
   }
 
   function renderList(releases) {
@@ -1063,7 +1049,7 @@ const ICONS = {"ios":{"PREV":{"s":56,"p":[["M 25.1218 44.5009 C 26.7084 44.5009 
       const version = (r.tag_name || "").replace(/^v/i, "");
       const apk = pickApk(r);
       const badge = i === 0 ? '<span class="release__badge">最新</span>' : "";
-      const meta = [day(r.published_at), apk ? mb(apk.size) : ""].filter(Boolean).join(" · ");
+      const meta = day(r.published_at);
       const link = apk ? apk.browser_download_url : r.html_url;
       return '<details class="release"' + (i === 0 ? " open" : "") + '>' +
         '<summary>' +
