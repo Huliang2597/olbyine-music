@@ -246,9 +246,11 @@ section { scroll-margin-top: 92px; }
 /* ============================================================
    Stats
    ============================================================ */
-.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .stat { background: var(--md-surface-container-low); border-radius: var(--shape-xl); padding: 20px 20px 18px; transition: background-color 220ms var(--ease-standard), border-radius 320ms var(--ease-spring); }
 .stat:hover { background: var(--md-surface-container); border-radius: var(--shape-l); }
+.stat--text b { font-size: 19px; letter-spacing: 0; }
+.stat--text span { display: block; margin-top: 6px; line-height: 1.5; }
 .stat b { display: block; font-size: 32px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat span { font-size: 13px; color: var(--md-on-surface-variant); }
 
@@ -365,7 +367,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
   .grid--6 .card:last-child { grid-column: 1 / -1; }
   .lyrics-grid { grid-template-columns: 1fr; }
   .install { grid-template-columns: 1fr; }
-  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
   :root { --page: min(1180px, 100% - 28px); }
@@ -506,7 +508,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
     <div class="hero__copy">
       <span class="chip chip--assist" data-reveal><span class="chip__dot"></span><span id="latest-tag">正在读取版本…</span></span>
       <h1 class="display-large" data-reveal style="--d:40ms">一个播放器<br>听所有的歌</h1>
-      <p class="lead body-large" data-reveal style="--d:100ms">本地音乐、网易云音乐、洛雪音乐、SoundCloud、Navidrome 与 WebDAV，共用同一个播放队列。歌词逐字显示，界面可选四种风格。</p>
+      <p class="lead body-large" data-reveal style="--d:100ms">本地音乐、网易云音乐、洛雪音乐、SoundCloud、Navidrome 与 WebDAV，共用同一个播放队列。歌词逐字显示，界面风格可以随时切换。</p>
       <div class="hero__actions" data-reveal style="--d:160ms">
         <a class="btn btn--filled layer" id="download" href="https://github.com/Huliang2597/olbyine-music/releases/latest">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
@@ -544,10 +546,10 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
 
   <div class="wrap">
     <div class="stats">
-      <div class="stat" data-reveal style="--d:0ms"><b data-count="6">6</b><span>音乐来源</span></div>
-      <div class="stat" data-reveal style="--d:60ms"><b data-count="4">4</b><span>界面风格</span></div>
-      <div class="stat" data-reveal style="--d:120ms"><b data-count="80" data-suffix="+">80+</b><span>每种风格的图标</span></div>
-      <div class="stat" data-reveal style="--d:180ms"><b data-count="29">29</b><span>参考的开源项目</span></div>
+      <div class="stat stat--text" data-reveal style="--d:0ms"><b>一个队列</b><span>本地与在线音源共用同一个播放队列</span></div>
+      <div class="stat stat--text" data-reveal style="--d:60ms"><b>逐字歌词</b><span>TTML、LRC、QRC 与翻译、罗马音</span></div>
+      <div class="stat stat--text" data-reveal style="--d:120ms"><b>多套界面</b><span>iOS、ColorOS、澎湃 OS、原生 Android</span></div>
+      <div class="stat stat--text" data-reveal style="--d:180ms"><b>开源免费</b><span>AGPL-3.0，无广告、无账号绑定</span></div>
     </div>
   </div>
 
@@ -715,7 +717,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
       </ol>
       <div data-reveal style="--d:80ms">
         <div class="notes">
-          <p><strong>全新安装。</strong>包名是 com.olbyine.music，不会覆盖旧版本，旧版的音乐库与登录信息需要重新导入。</p>
+          <p><strong>直接升级。</strong>安装包签名固定，下载新版本后直接覆盖安装即可，音乐库、歌单与登录状态都会保留。</p>
           <p><strong>可选权限：</strong>悬浮窗用于桌面歌词，通知读取用于显示其他播放器的歌词。不开也能正常播放。</p>
         </div>
         <div class="hashes">
@@ -744,7 +746,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: 
 
 <footer>
   <div class="wrap">
-    <span>Olbyine 1.1 · AGPL-3.0</span>
+    <span>Olbyine · AGPL-3.0</span>
     <span>音乐、歌词和封面的权利属于其权利人。本项目与网易云音乐、SoundCloud、Navidrome 无关联。</span>
   </div>
 </footer>
