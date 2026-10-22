@@ -33,6 +33,7 @@ let frameRequest = 0;
 let animateUntil = 0;
 let reducedMotion = false;
 let lineBlur = true;
+let alignPosition = 0.5;
 let showTranslation = true;
 let showRoman = true;
 /** The current document's lines as parsed, before the translation / romanization settings. */
@@ -222,6 +223,17 @@ function setStyle(value) {
   // Translation / romanization size, relative to the main line (its own setting).
   const subScale = Math.max(0.3, Math.min(1, numberOr(data.subScale, 0.5)));
   host.style.setProperty("--olbyine-sub-scale", String(subScale));
+  const lineGap = Math.max(1, Math.min(2.4, numberOr(data.lineGap, 1.2)));
+  host.style.setProperty("--olbyine-line-gap", String(lineGap));
+  const align = Math.max(0.15, Math.min(0.85, numberOr(data.alignPosition, 0.5)));
+  if (align !== alignPosition) {
+    alignPosition = align;
+    player.setAlignPosition(align);
+    const alignTime = lyricTime();
+    player.setCurrentTime(alignTime, true);
+    player.update(0);
+    requestUpdate(1200);
+  }
   tapSeek = data.tapSeek === "single" ? "single" : "double";
   requestUpdate(600);
 }

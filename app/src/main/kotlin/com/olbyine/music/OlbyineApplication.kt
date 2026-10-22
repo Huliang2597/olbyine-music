@@ -65,5 +65,6 @@ class OlbyineApplication : Application() {
         webDav = com.olbyine.music.data.WebDavRepository(this)
         musicLibrary.remoteHeaders = webDav::headersFor
         com.olbyine.music.playback.usb.UsbAudioDriver.init(this)
+        com.olbyine.music.data.ListenTogetherIm.init(this)
     }
 }

@@ -57,9 +57,40 @@ object LyricsParser {
     private val yrcWord = Regex("\\((\\d+),(\\d+)(?:,\\d+)?\\)([^()]*)")
     private val htmlTag = Regex("<[^>]+>")
 
+    private val TIMESTAMP_TAG = Regex("""\[\d{1,3}:\d{1,2}""")
+    private val QUOTED_TEXT = Regex(""""((?:[^"\\]|\\.)*)"""")
+
+    private val TX_FIELD = Regex(""""tx"\s*:\s*"((?:[^"\\]|\\.)*)"""")
+
+    fun sanitize(raw: String): String {
+        val text = raw.trim()
+        if (txField(text)) return ""
+        if (!text.startsWith("{") && !text.startsWith("[")) return raw
+        val looksJson = text.contains("\"code\"") || text.contains("\"msg\"") ||
+            text.contains("\"data\"") || text.contains("\"lyric\"")
+        if (!looksJson) return raw
+        val quoted = QUOTED_TEXT.findAll(text).map { it.groupValues[1] }.toList()
+        val withTime = quoted.filter { TIMESTAMP_TAG.containsMatchIn(it) }
+        if (withTime.isNotEmpty()) return withTime.joinToString("\n")
+        val payload = quoted.firstOrNull { it.length > 20 && !it.startsWith("http") && !TIMESTAMP_TAG.containsMatchIn(it) }
+        return payload ?: ""
+    }
+
+    private fun txField(text: String): Boolean {
+        if (!text.startsWith("{")) return false
+        val tx = TX_FIELD.findAll(text).map { it.groupValues[1] }.toList()
+        if (tx.size < 2) return false
+        val credit = tx.joinToString("").replace("\u00a0", "")
+        return !TIMESTAMP_TAG.containsMatchIn(credit) &&
+            (credit.contains("作曲") || credit.contains("作词") || credit.contains("编曲") ||
+                credit.contains("制作") || credit.contains("混音") || credit.contains("母带"))
+    }
+
     fun parse(raw: String): LyricsDocument {
         if (raw.isBlank()) return LyricsDocument.Empty
-        val normalized = raw.replace("\r\n", "\n").replace('\r', '\n').trim()
+        val cleaned = sanitize(raw)
+        if (cleaned.isBlank()) return LyricsDocument.Empty
+        val normalized = cleaned.replace("\r\n", "\n").replace('\r', '\n').trim()
         val parsed = if (normalized.contains("<tt", ignoreCase = true) ||
             normalized.contains("<p ", ignoreCase = true)
         ) {

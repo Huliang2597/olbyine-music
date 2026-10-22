@@ -142,6 +142,7 @@ internal fun QueuePanel(
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
     actions: QueueItemActions? = null,
+    artworkColors: List<Int> = emptyList(),
 ) {
     var menuIndex by remember { mutableStateOf<Int?>(null) }
     val progress = remember { Animatable(0f) }
@@ -149,6 +150,14 @@ internal fun QueuePanel(
     val haptics = rememberHaptics()
     var dragOffset by remember { mutableStateOf(0f) }
     val handoff = remember { floatArrayOf(0f, 0f) }
+    val baseInk = androidx.compose.ui.graphics.Color(0xFF4CAF50).copy(alpha = 0.95f)
+    val queueShadow = remember {
+        androidx.compose.ui.graphics.Shadow(
+            color = androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.7f),
+            offset = androidx.compose.ui.geometry.Offset(0f, 1.5f),
+            blurRadius = 6f,
+        )
+    }
     val settleJob = remember { arrayOfNulls<Job>(1) }
     LaunchedEffect(visible) {
         settleJob[0]?.cancel()
@@ -236,8 +245,8 @@ internal fun QueuePanel(
                             Text("播放队列", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                             Text(
                                 "${queue.size} 首 · ${formatTotalDuration(queue.sumOf { it.durationMs })}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall.copy(shadow = queueShadow),
+                                color = baseInk,
                             )
                         }
                         ModeChip(Icons.Rounded.Shuffle, "随机", playback.shuffleEnabled) { haptics.tick(HapticArea.PLAYBACK); onShuffle() }
@@ -280,6 +289,7 @@ internal fun QueuePanel(
                                 modifier = itemMotion(),
                             ) {
                                 QueueRow(
+                                    queueInk = baseInk,
                                     track = track,
                                     index = index,
                                     current = index == current,
@@ -448,7 +458,15 @@ private fun QueueRow(
     onRemove: () -> Unit,
     onLongPress: (() -> Unit)?,
     modifier: Modifier,
+    queueInk: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
+    val queueShadow = remember {
+        androidx.compose.ui.graphics.Shadow(
+            color = androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.7f),
+            offset = androidx.compose.ui.geometry.Offset(0f, 1.5f),
+            blurRadius = 6f,
+        )
+    }
     val ink = MaterialTheme.colorScheme.onSurface
     Row(
         modifier
@@ -481,13 +499,13 @@ private fun QueueRow(
                 fontWeight = if (current) FontWeight.Bold else FontWeight.Medium,
                 color = ink,
             )
-            Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall.copy(shadow = queueShadow), color = queueInk)
         }
         Text(
             formatDuration(track.durationMs),
-            style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum", shadow = queueShadow),
+            color = queueInk,
         )
         if (!current) {
             GhostIconButton(Icons.Rounded.Close, "从队列移除", onRemove, size = 40.dp, iconSize = 18.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)

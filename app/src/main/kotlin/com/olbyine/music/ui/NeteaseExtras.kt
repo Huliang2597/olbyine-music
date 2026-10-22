@@ -31,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,6 +41,29 @@ import com.olbyine.music.data.NeteaseClient
 import com.olbyine.music.data.NeteasePlaylistSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+
+internal enum class NeteasePlaylistSort { DEFAULT, MOST_USED }
+
+@Composable
+private fun NeteaseSortChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        Modifier
+            .clip(shape)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 @Composable
 internal fun NeteasePlaylistPicker(
@@ -52,6 +76,19 @@ internal fun NeteasePlaylistPicker(
         client.playlists().filter { it.own && !it.liked }
     }
     var naming by remember { mutableStateOf(false) }
+    val pickerContext = LocalContext.current
+    var sortMode by remember { mutableStateOf(NeteasePlaylistSortStore.sortMode(pickerContext)) }
+    val usage = remember(state.value) { NeteasePlaylistSortStore.usage(pickerContext) }
+    val sorted = remember(state.value, sortMode, usage) {
+        val lists = state.value.orEmpty()
+        when (sortMode) {
+            NeteasePlaylistSort.DEFAULT -> lists
+            NeteasePlaylistSort.MOST_USED -> lists.sortedWith(
+                compareByDescending<NeteasePlaylistSummary> { usage[it.id] ?: 0L }
+                    .thenByDescending { it.playCount },
+            )
+        }
+    }
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
     GlassBottomSheet(onDismissRequest = onDismiss) {
@@ -63,7 +100,24 @@ internal fun NeteasePlaylistPicker(
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.size(10.dp))
-            val lists = state.value
+            if (state.value != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 22.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    NeteaseSortChip("默认顺序", sortMode == NeteasePlaylistSort.DEFAULT) {
+                        sortMode = NeteasePlaylistSort.DEFAULT
+                        NeteasePlaylistSortStore.setSortMode(pickerContext, sortMode)
+                    }
+                    NeteaseSortChip("常用优先", sortMode == NeteasePlaylistSort.MOST_USED) {
+                        sortMode = NeteasePlaylistSort.MOST_USED
+                        NeteasePlaylistSortStore.setSortMode(pickerContext, sortMode)
+                    }
+                }
+                Spacer(Modifier.size(8.dp))
+            }
+            val lists = if (state.value == null) null else sorted
             if (lists == null) {
                 LoadingOrError(state.loading, state.error, retry)
             } else {
@@ -95,6 +149,7 @@ internal fun NeteasePlaylistPicker(
                             subtitle = "${playlist.trackCount} 首",
                             onClick = {
                                 haptics.click(HapticArea.MENUS)
+                                NeteasePlaylistSortStore.touch(pickerContext, playlist.id)
                                 onPick(playlist)
                             },
                         )
@@ -110,6 +165,7 @@ internal fun NeteasePlaylistPicker(
             scope.launch {
                 try {
                     val id = client.createPlaylist(name)
+                    NeteasePlaylistSortStore.touch(pickerContext, id)
                     onPick(NeteasePlaylistSummary(id, name, null, 0, "", liked = false, own = true))
                 } catch (error: Throwable) {
                     if (error is CancellationException) throw error
@@ -218,5 +274,35 @@ internal fun ScPlaylistPicker(
             naming = false
             run({ client.createPlaylist(name, trackId) }, "已新建歌单「$name」")
         }
+    }
+}
+
+internal object NeteasePlaylistSortStore {
+    private const val FILE = "olbyine_ncm_picker"
+    private const val KEY_SORT = "sort_mode"
+
+    private fun prefs(context: android.content.Context) =
+        context.getSharedPreferences(FILE, android.content.Context.MODE_PRIVATE)
+
+    fun sortMode(context: android.content.Context): NeteasePlaylistSort =
+        if (prefs(context).getString(KEY_SORT, "") == "MOST_USED") NeteasePlaylistSort.MOST_USED else NeteasePlaylistSort.DEFAULT
+
+    fun setSortMode(context: android.content.Context, mode: NeteasePlaylistSort) {
+        prefs(context).edit().putString(KEY_SORT, if (mode == NeteasePlaylistSort.MOST_USED) "MOST_USED" else "DEFAULT").apply()
+    }
+
+    fun touch(context: android.content.Context, id: Long) {
+        prefs(context).edit().putLong("used_$id", System.currentTimeMillis()).apply()
+    }
+
+    fun usage(context: android.content.Context): Map<Long, Long> {
+        val stored = prefs(context).all
+        val result = HashMap<Long, Long>(stored.size)
+        stored.forEach { (key, value) ->
+            if (key.startsWith("used_") && value is Long) {
+                key.removePrefix("used_").toLongOrNull()?.let { result[it] = value }
+            }
+        }
+        return result
     }
 }

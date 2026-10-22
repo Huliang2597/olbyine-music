@@ -35,6 +35,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.olbyine.music.data.HapticArea
 import com.olbyine.music.data.NeteaseClient
@@ -58,6 +60,7 @@ internal fun QualityBadge(track: Track, shine: Modifier) {
         track.id.startsWith("sc:") -> null
         else -> track.formatLabel()
     } ?: return
+    val picker = if (ncmId != null) quality else null
     Box(
         Modifier
             .clip(RoundedCornerShape(6.dp))
@@ -67,24 +70,23 @@ internal fun QualityBadge(track: Track, shine: Modifier) {
             },
     ) {
         Badge(label, shine)
-        OlbyineDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (ncmId != null && quality != null) {
+        if (picker != null) {
+            OlbyineDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 NeteaseQualityMenu(
-                    current = quality.first,
+                    current = picker.first,
                     served = streams[ncmId]?.let { NeteaseClient.qualityBadge(it.level) + (it.bitrate.takeIf { br -> br > 0 }?.let { br -> " · ${br / 1000} kbps" } ?: "") },
                     onPick = { level ->
                         open = false
-                        if (level != quality.first) quality.second(level)
+                        if (level != picker.first) picker.second(level)
                     },
                 )
-            } else {
-                AudioDetailsCard(track)
             }
         }
     }
+    if (open && picker == null) AudioInfoDialog(track) { open = false }
 }
 @Composable
-private fun AudioDetailsCard(track: Track) {
+private fun AudioInfoDialog(track: Track, onDismiss: () -> Unit) {
     val format by NowPlayingFormat.format.collectAsState()
     val live = format.takeIf { it.mediaId == track.id }
     val driver by UsbAudioDriver.state.collectAsState()
@@ -103,18 +105,34 @@ private fun AudioDetailsCard(track: Track) {
             2 -> "立体声"
             else -> "$channels 声道"
         },
-        track.sizeBytes.takeIf { it > 0 }?.let { "大小" to String.format(Locale.US, "%.1f MB", it / 1_048_576.0) },
+        track.sizeBytes.takeIf { it > 0 }?.let { "文件大小" to String.format(Locale.US, "%.1f MB", it / 1_048_576.0) },
         "输出" to when (driver.status) {
             UsbDriverStatus.STREAMING -> if (driver.bitPerfect) "USB 位完美" else "USB 独占"
             else -> "系统混音"
         },
     )
-    Column(Modifier.width(244.dp).padding(horizontal = 14.dp, vertical = 6.dp)) {
-        rows.forEachIndexed { index, (label, value) ->
-            if (index > 0) Box(Modifier.fillMaxWidth().height(0.5.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f)))
-            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+    OlbyineDialog(
+        onDismissRequest = onDismiss,
+        title = "音频信息",
+        confirmButton = { GlassTextButton(onClick = onDismiss) { Text("关闭") } },
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Text(
+                track.title,
+                Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Start,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(8.dp))
+            rows.forEachIndexed { index, (label, value) ->
+                if (index > 0) Box(Modifier.fillMaxWidth().height(0.5.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f)))
+                Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Start)
+                    Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End)
+                }
             }
         }
     }

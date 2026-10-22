@@ -342,6 +342,7 @@ internal fun PlayerPage(
             playback = state.playback,
             onDismiss = { queueVisible = false },
             onPlay = { index -> onPlayQueueIndex(index) },
+            artworkColors = state.artworkColors,
         )
     }
 }
@@ -1704,7 +1705,9 @@ internal fun QueueSheet(
     playback: PlaybackState,
     onDismiss: () -> Unit,
     onPlay: (Int) -> Unit,
+    artworkColors: List<Int> = emptyList(),
 ) {
+    val coverInk = coverSecondaryInk(artworkColors) ?: MaterialTheme.colorScheme.primary
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val currentIndex = playback.currentIndex
     GlassBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -1717,7 +1720,7 @@ internal fun QueueSheet(
                         if (playback.shuffleEnabled) append(" · 随机")
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = coverInk,
                 )
             }
         }
@@ -1765,16 +1768,35 @@ internal fun QueueSheet(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = coverInk,
                         )
                     }
                     Text(
                         formatDuration(track.durationMs),
                         style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = coverInk,
                     )
                 }
             }
         }
+    }
+}
+
+internal fun coverSecondaryInk(colors: List<Int>): androidx.compose.ui.graphics.Color? {
+    if (colors.isEmpty()) return null
+    var sumR = 0f
+    var sumG = 0f
+    var sumB = 0f
+    colors.forEach { argb ->
+        sumR += android.graphics.Color.red(argb) / 255f
+        sumG += android.graphics.Color.green(argb) / 255f
+        sumB += android.graphics.Color.blue(argb) / 255f
+    }
+    val count = colors.size.toFloat()
+    val luminance = 0.299f * (sumR / count) + 0.587f * (sumG / count) + 0.114f * (sumB / count)
+    return if (luminance > 0.5f) {
+        androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.92f)
+    } else {
+        androidx.compose.ui.graphics.Color(1f, 1f, 1f, 0.96f)
     }
 }

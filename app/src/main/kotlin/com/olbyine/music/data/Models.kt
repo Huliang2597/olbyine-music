@@ -121,6 +121,7 @@ enum class UiStyle(val label: String) {
 data class UserSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val lyricFontSize: Float = 30f,
+    val lyricLineGap: Float = 1.2f,
     val lyricInactiveOpacity: Float = 0.38f,
     val lyricOffsetMs: Long = 0L,
     val lyricAlignPosition: Float = 0.5f,
@@ -154,6 +155,7 @@ data class UserSettings(
     val lyricDoubleTapSeek: Boolean = true,
     val lyricMvStyle: String = "",
     val showSourceSwitch: Boolean = true,
+    val floatingCoverButton: Boolean = true,
     val backgroundStyle: String = "ios",
     val layoutMode: String = "auto",
     val albumStyle: String = "grid",

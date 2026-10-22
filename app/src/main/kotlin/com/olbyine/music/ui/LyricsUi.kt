@@ -97,6 +97,7 @@ internal fun LyricsPage(
     playback: PlaybackState,
     visible: Boolean,
     fontSize: Float,
+    lineGap: Float = 1.2f,
     fontWeight: Int,
     fontPath: String?,
     inactiveOpacity: Float,
@@ -127,6 +128,7 @@ internal fun LyricsPage(
     mvStyle: MvStyle? = null,
     onMvStyle: ((MvStyle?) -> Unit)? = null,
     alignPosition: Float = .5f,
+    artworkColors: List<Int> = emptyList(),
 ) {
     var mvMenu by remember { mutableStateOf(false) }
     val listening = externalStatus != null
@@ -228,6 +230,7 @@ internal fun LyricsPage(
                 showTranslation = showTranslation,
                 style = mvStyle,
                 modifier = Modifier.fillMaxSize(),
+                lineGap = lineGap,
                 onTap = { if (controlsVisible) controlsVisible = false else revealControls() },
             )
         } else {
@@ -239,6 +242,7 @@ internal fun LyricsPage(
                 fontWeight = fontWeight,
                 fontPath = fontPath,
                 inactiveOpacity = inactiveOpacity,
+                lineGap = lineGap,
                 offsetMs = offsetMs,
                 onLineTap = { position ->
                     if (position != null) onSeek(position)
@@ -340,6 +344,7 @@ internal fun LyricsPage(
             playback = playback,
             onDismiss = { queueVisible = false },
             onPlay = onPlayQueueIndex,
+            artworkColors = artworkColors,
         )
     }
 }

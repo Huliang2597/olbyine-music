@@ -810,6 +810,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setLyricDoubleTapSeek(value: Boolean) = settingsRepository.setLyricDoubleTapSeek(value)
     fun setLyricMvStyle(value: String) = settingsRepository.setLyricMvStyle(value)
     fun setShowSourceSwitch(value: Boolean) = settingsRepository.setShowSourceSwitch(value)
+
+    fun setFloatingCoverButton(value: Boolean) = settingsRepository.setFloatingCoverButton(value)
+
     fun setBackgroundStyle(value: String) = settingsRepository.setBackgroundStyle(value)
     fun setLayoutMode(value: String) = settingsRepository.setLayoutMode(value)
     fun setAlbumStyle(value: String) = settingsRepository.setAlbumStyle(value)
@@ -1365,6 +1368,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val queue = songs.map { it.toTrack() }
         onlineTracks.value = onlineTracks.value + queue.associateBy(Track::id)
         val start = index.coerceIn(0, queue.lastIndex)
+        if (!shuffle && openPlayerIfCurrent(queue[start].id)) return
+        if (needsListenTogetherGuard()) {
+            askLeaveListenTogether { playKuwo(songs, index, shuffle) }
+            return
+        }
         if (shuffle && !uiState.value.playback.shuffleEnabled) playback.toggleShuffle()
         val key = _kuwo.value.collectionId
         setPlayOrigin(
@@ -1832,6 +1840,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun artistInfo(name: String): ArtistInfo? = withContext(Dispatchers.IO) { metadataRepository.artist(name) }
 
+    suspend fun ensureArtistInfo(name: String): ArtistInfo? = withContext(Dispatchers.IO) { metadataRepository.ensureArtist(name) }
+
+    suspend fun neteaseArtistIdFor(track: Track, name: String): Long? {
+        val songId = track.id.removePrefix("ncm:").toLongOrNull()?.takeIf { track.id.startsWith("ncm:") } ?: return null
+        val song = runCatching { netease.song(songId) }.getOrNull() ?: return null
+        val index = song.artists.indexOfFirst { it.trim().equals(name.trim(), ignoreCase = true) }
+        return if (index >= 0) song.artistIds.getOrNull(index) else song.artistIds.firstOrNull()
+    }
+
     suspend fun albumInfo(title: String, artist: String): AlbumInfo? =
         withContext(Dispatchers.IO) { metadataRepository.album(title, artist) }
 
@@ -1983,7 +2000,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (show && destination.value != AppDestination.NOW_PLAYING) navigateTo(AppDestination.NOW_PLAYING)
     }
 
+    data class ListenTogetherGuard(val summary: String?, val pending: (() -> Unit)? = null)
+
+    private val _listenGuard = MutableStateFlow<ListenTogetherGuard?>(null)
+    val listenGuard: StateFlow<ListenTogetherGuard?> = _listenGuard
+
+    fun dismissListenGuard() {
+        _listenGuard.value = null
+    }
+
+    fun confirmListenGuard() {
+        val pending = _listenGuard.value?.pending
+        _listenGuard.value = null
+        leaveListenTogether()
+        pending?.invoke()
+    }
+
+    private fun inListenTogether(): Boolean =
+        listenJob?.isActive == true && _listenTogether.value.room != null
+
+    private fun needsListenTogetherGuard(): Boolean = inListenTogether()
+
+    private fun askLeaveListenTogether(pending: () -> Unit) {
+        val partner = _listenTogether.value.room?.users
+            ?.firstOrNull { it.userId != netease.account.value?.userId }
+            ?.nickname
+        _listenGuard.value = ListenTogetherGuard(
+            summary = if (partner.isNullOrBlank()) {
+                "您现在正在网易云一起听。如果继续播放，将退出一起听。"
+            } else {
+                "您现在正在和 $partner 一起听。如果继续播放，将退出一起听。"
+            },
+            pending = pending,
+        )
+    }
+
+    private fun openPlayerIfCurrent(trackId: String): Boolean {
+        if (trackId.isBlank() || uiState.value.currentTrack?.id != trackId) return false
+        navigateTo(AppDestination.NOW_PLAYING)
+        return true
+    }
+
     fun playTrack(track: Track) {
+        if (openPlayerIfCurrent(track.id)) return
+        if (needsListenTogetherGuard()) {
+            askLeaveListenTogether { playTrackUnchecked(track) }
+            return
+        }
+        playTrackUnchecked(track)
+    }
+
+    private fun playTrackUnchecked(track: Track) {
         val queue = uiState.value.visibleTracks.ifEmpty { uiState.value.tracks }
         val index = queue.indexOfFirst { it.id == track.id }.takeIf { it >= 0 } ?: 0
         playback.playQueue(queue, index)
@@ -1992,6 +2059,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playTracks(tracks: List<Track>, index: Int, origin: PlayOrigin? = null) {
         if (tracks.isEmpty() || index !in tracks.indices) return
+        if (openPlayerIfCurrent(tracks[index].id)) return
+        if (needsListenTogetherGuard()) {
+            val snapshot = tracks
+            val at = index
+            askLeaveListenTogether { playTracksUnchecked(snapshot, at, origin) }
+            return
+        }
+        playTracksUnchecked(tracks, index, origin)
+    }
+
+    private fun playTracksUnchecked(tracks: List<Track>, index: Int, origin: PlayOrigin?) {
         val currentKind = _playOrigin.value?.kind
         if (origin != null || currentKind == "folder" || currentKind == "playlist" || currentKind == "album") {
             setPlayOrigin(origin)
@@ -2530,6 +2608,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         onlineTracks.value = onlineTracks.value + tracks.associateBy(Track::id)
+        if (!shuffle && openPlayerIfCurrent(tracks.getOrNull(index)?.id.orEmpty())) return
+        if (needsListenTogetherGuard()) {
+            askLeaveListenTogether { playNavidrome(songs, index, shuffle, origin) }
+            return
+        }
         if (shuffle) playback.setPlayMode(true, playback.state.value.repeatMode)
         playback.playQueue(tracks, if (shuffle) tracks.indices.random() else index)
     }
@@ -2722,6 +2805,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         shuffle: Boolean = false,
         source: String? = null,
         startMs: Long = 0L,
+    ) = playNeteaseQueue(songs, index, shuffle, source, startMs, openPlayer = true, guardCurrent = true)
+
+    private fun playNeteaseQueue(
+        songs: List<com.olbyine.music.data.NeteaseSong>,
+        index: Int,
+        shuffle: Boolean,
+        source: String?,
+        startMs: Long,
+        openPlayer: Boolean,
+        guardCurrent: Boolean,
     ) {
         val state = _netease.value
         val online = settingsRepository.settings.value.neteaseOnline
@@ -2739,6 +2832,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val start = chosen?.let { song ->
             queue.indexOfFirst { it.id == (state.localMatches[song.id] ?: com.olbyine.music.data.NeteaseSong.trackId(song.id)) }
         }?.takeIf { it >= 0 } ?: 0
+        if (guardCurrent && !shuffle && openPlayerIfCurrent(queue[start].id)) return
         if (shuffle && !uiState.value.playback.shuffleEnabled) playback.toggleShuffle()
         _activeCollection.value = source
         setPlayOrigin(
@@ -2766,7 +2860,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             delay(700)
             playback.seekTo(startMs)
         }
-        navigateTo(AppDestination.NOW_PLAYING)
+        if (openPlayer) navigateTo(AppDestination.NOW_PLAYING)
     }
 
     fun resumeNeteaseCollection(key: String, songs: List<com.olbyine.music.data.NeteaseSong>) {
@@ -2855,7 +2949,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val room: com.olbyine.music.data.NeteaseListenRoom? = null,
         val busy: Boolean = false,
         val message: String? = null,
+        val startedAt: Long = 0L,
+        val summary: ListenTogetherSummary? = null,
     )
+
+    data class ListenTogetherSummary(
+        val songs: Int,
+        val minutes: Long,
+        val messages: List<com.olbyine.music.data.ListenTogetherIm.Chat>,
+        val selfLeft: Boolean = false,
+    )
+
+    private val listenSessionSongs = java.util.Collections.synchronizedSet(LinkedHashSet<Long>())
+
+    fun dismissListenSummary() {
+        _listenTogether.value = _listenTogether.value.copy(summary = null)
+    }
 
     private val _listenTogether = MutableStateFlow(ListenTogetherUiState())
     val listenTogether: StateFlow<ListenTogetherUiState> = _listenTogether
@@ -2883,7 +2992,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun joinListenTogether(link: String) {
-        val target = com.olbyine.music.data.NeteaseLinks.resolve(link.trim().let { if (it.startsWith("http")) it else "https://$it" })
+        val extracted = com.olbyine.music.data.NeteaseLinks.extractUrl(link)
+        val target = com.olbyine.music.data.NeteaseLinks.resolve(extracted.let { if (it.startsWith("http")) it else "https://$it" })
         if (target !is com.olbyine.music.data.NeteaseTarget.ListenTogether) {
             _listenTogether.value = _listenTogether.value.copy(message = "没有识别到一起听邀请链接")
             return
@@ -2896,7 +3006,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _listenTogether.value = ListenTogetherUiState(busy = true)
         viewModelScope.launch {
             try {
-                startListenLoop(netease.listenAccept(roomId, inviterId))
+                val joined = netease.listenAccept(roomId, inviterId)
+                val freshest = runCatching { netease.listenStatus() }.getOrNull()?.takeIf { it.roomId == roomId }
+                startListenLoop(freshest ?: joined)
                 message.value = "已加入一起听"
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
@@ -2907,77 +3019,401 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun leaveListenTogether() {
         val room = _listenTogether.value.room
+        val state = _listenTogether.value
+        val summary = if (room != null) {
+            ListenTogetherSummary(
+                songs = listenSessionSongs.size,
+                minutes = ((System.currentTimeMillis() - (state.startedAt.takeIf { it > 0L } ?: System.currentTimeMillis())) / 60_000L).coerceAtLeast(1L),
+                messages = com.olbyine.music.data.ListenTogetherIm.messages.value,
+                selfLeft = true,
+            )
+        } else {
+            null
+        }
+        com.olbyine.music.data.ListenTogetherIm.disconnect()
         listenJob?.cancel()
         listenJob = null
-        _listenTogether.value = ListenTogetherUiState()
+        _listenTogether.value = ListenTogetherUiState(summary = summary)
         if (room != null) viewModelScope.launch { netease.listenEnd(room.roomId) }
     }
 
+    private fun ncmIdOf(mediaId: String?): Long =
+        mediaId?.takeIf { it.startsWith("ncm:") }?.removePrefix("ncm:")?.toLongOrNull() ?: 0L
+
+    private fun listenQueueIds(): List<Long> =
+        uiState.value.queue.mapNotNull { track -> ncmIdOf(track.id).takeIf { it > 0L } }
+
     private fun startListenLoop(room: com.olbyine.music.data.NeteaseListenRoom) {
         listenJob?.cancel()
-        _listenTogether.value = ListenTogetherUiState(room = room)
+        listenSessionSongs.clear()
+        _listenTogether.value = ListenTogetherUiState(room = room, startedAt = room.startedAt.takeIf { it > 0L } ?: System.currentTimeMillis())
         listenJob = viewModelScope.launch {
-            var seq = 1
-            var version = 1
-            var lastSong = 0L
-            var lastPlaying: Boolean? = null
-            var lastPosition = 0L
-            var lastQueue: List<Long> = emptyList()
+            val sessionStart = room.startedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            val sessionSongs = listenSessionSongs
+            var pushSeq = 0
+            var pushVersion = 0
+            var pushedInFlight = false
+            var pushedAt = 0L
+            var synced = false
+            var deferPushUntil = 0L
+            var lastImRetry = 0L
+            var localHoldUntil = 0L
+            var lastPushPlaying: Boolean? = null
+            var lastPushSongId = 0L
+            var remotePlayingMirror: Boolean? = null
+            var roomCursor: Long = 0L
+            var reportedSong = 0L
+            var reportedPlaying: Boolean? = null
+            var reportedPosition = 0L
+            var reportedIds: List<Long> = emptyList()
+            var roomIds: List<Long> = emptyList()
+            var quietUntil = 0L
+            var remoteAppliedAt = 0L
             var lastBeat = 0L
+            var lastRemoteProgress: Long? = null
+            var lastRemotePlaying: Boolean? = null
             var tick = 0
+            val details = HashMap<Long, com.olbyine.music.data.NeteaseSong>()
+            val pendingRemote = java.util.concurrent.atomic.AtomicReference<com.olbyine.music.data.NeteaseClient.NeteaseListenSync?>(null)
+            val lastAppliedSeq = java.util.concurrent.atomic.AtomicLong(0L)
+            launch {
+                com.olbyine.music.data.ListenTogetherIm.commands.collect { command ->
+                    val merged = runCatching { netease.mergeListenCommand(command) }.getOrNull()
+                    if (merged != null && merged.seq > lastAppliedSeq.get()) {
+                        val queued = pendingRemote.get()
+                        if (queued == null || merged.seq >= queued.seq) pendingRemote.set(merged)
+                    }
+                }
+            }
+            val roomEnded = java.util.concurrent.atomic.AtomicBoolean(false)
+            val brokenListenRoom = java.util.concurrent.atomic.AtomicBoolean(false)
+            val peerLeftEvent = java.util.concurrent.atomic.AtomicBoolean(false)
+            val remoteListenCount = java.util.concurrent.atomic.AtomicInteger(-1)
+            val meForEvents = netease.account.value?.userId ?: 0L
+            launch {
+                com.olbyine.music.data.ListenTogetherIm.events.collect { event ->
+                    when (event.type) {
+                        20_009 -> {
+                            if (meForEvents != 0L && event.unopenedUserIds.contains(meForEvents)) brokenListenRoom.set(true)
+                        }
+                        20_010 -> {
+                            if (event.listenCount > 0) remoteListenCount.set(event.listenCount)
+                            else if (event.roomId.isNotBlank()) peerLeftEvent.set(true)
+                        }
+                        else -> Unit
+                    }
+                }
+            }
+            launch {
+                val chatRoom = room.chatRoomId?.takeIf { it.isNotBlank() }
+                    ?: runCatching { netease.listenStatus() }.getOrNull()?.takeIf { it.roomId == room.roomId }?.chatRoomId
+                if (chatRoom.isNullOrBlank()) return@launch
+                val im = runCatching { netease.listenImAccount() }.getOrNull() ?: return@launch
+                val me = netease.account.value
+                com.olbyine.music.data.ListenTogetherIm.connect(im, chatRoom, room.roomId, me)
+            }
+            suspend fun songsOf(ids: List<Long>): List<com.olbyine.music.data.NeteaseSong> {
+                val missing = ids.filterNot(details::containsKey)
+                if (missing.isNotEmpty()) {
+                    runCatching { netease.songDetails(missing) }.getOrNull()?.forEach { details[it.id] = it }
+                }
+                return ids.mapNotNull { details[it] }
+            }
             while (true) {
                 val current = _listenTogether.value.room ?: break
                 val state = playback.state.value
-                val songId = state.currentMediaId?.takeIf { it.startsWith("ncm:") }?.removePrefix("ncm:")?.toLongOrNull() ?: 0L
+                val now = android.os.SystemClock.elapsedRealtime()
+                val songId = ncmIdOf(state.currentMediaId)
                 val position = state.estimatedPosition()
-                if (current.host) {
-                    val queue = uiState.value.queue.mapNotNull { it.id.takeIf { id -> id.startsWith("ncm:") }?.removePrefix("ncm:")?.toLongOrNull() }
-                    runCatching {
-                        if (queue.isNotEmpty() && queue != lastQueue) {
-                            netease.listenSyncList(current.roomId, queue, version++)
-                            lastQueue = queue
+                val playing = state.isPlaying
+                if (songId != 0L) sessionSongs.add(songId)
+                val localHold = now < localHoldUntil
+                pendingRemote.getAndSet(null)?.let { remotePush ->
+                    if (remotePush.seq > lastAppliedSeq.get()) {
+                        lastAppliedSeq.set(remotePush.seq)
+                        remoteAppliedAt = now
+                        quietUntil = now + 3_000L
+                        val target = remotePush.songId?.takeIf { it != 0L }
+                        val cursor = target ?: (remotePush.roomSongId?.takeIf { it != 0L })
+                        val remotePaused = remotePush.playing == false
+                        val switchingTrack = cursor != null && cursor != songId && (roomIds.contains(cursor) || roomIds.isEmpty())
+                        if (remotePaused && playing && !switchingTrack) {
+                            playback.pause()
+                            reportedPlaying = false
+                            quietUntil = now + 1_500
                         }
-                        if (songId != 0L && songId != lastSong) {
-                            netease.listenCommand(current.roomId, "GOTO", position, state.isPlaying, lastSong, songId, seq++)
-                        } else if (songId != 0L && lastPlaying != null && lastPlaying != state.isPlaying) {
-                            netease.listenCommand(current.roomId, if (state.isPlaying) "PLAY" else "PAUSE", position, state.isPlaying, songId, songId, seq++)
-                        } else if (songId != 0L && state.isPlaying && kotlin.math.abs(position - (lastPosition + 1_000L)) > 4_000L) {
-                            netease.listenCommand(current.roomId, "SEEK", position, true, songId, songId, seq++)
+                        if (switchingTrack && cursor != null) {
+                            val songs = songsOf(if (roomIds.contains(cursor)) roomIds else listOf(cursor))
+                            if (songs.isNotEmpty()) {
+                                val index = songs.indexOfFirst { it.id == cursor }.coerceAtLeast(0)
+                                playNeteaseQueue(
+                                    songs, index, shuffle = false, source = null,
+                                    startMs = if (songs[index].id == cursor) remotePush.progress ?: 0L else 0L,
+                                    openPlayer = false, guardCurrent = false,
+                                )
+                                reportedIds = listenQueueIds()
+                                reportedSong = cursor
+                                playback.play()
+                                reportedPlaying = true
+                                localHoldUntil = now + 2_000L
+                                reportedPosition = remotePush.progress ?: 0L
+                                quietUntil = now + 2_000
+                            }
+                        } else if (!localHold && target != null && target == songId && remotePush.progress != null &&
+                            kotlin.math.abs((remotePush.progress) - position) > 2_500L
+                        ) {
+                            playback.seekTo(remotePush.progress)
+                            reportedPosition = remotePush.progress
+                            quietUntil = now + 1_500
                         }
-                    }
-                    if (songId != 0L) {
-                        lastSong = songId
-                        lastPlaying = state.isPlaying
-                    }
-                    lastPosition = position
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    if (songId != 0L && now - lastBeat > 30_000L) {
-                        netease.listenHeartbeat(current.roomId, songId, state.isPlaying, position)
-                        lastBeat = now
-                    }
-                } else if (tick % 5 == 0) {
-                    runCatching { netease.listenPlaylist(current.roomId) }.getOrNull()?.let { (ids, playing, progress) ->
-                        val target = playing ?: ids.firstOrNull()
-                        if (target != null && target != songId && target != lastSong) {
-                            lastSong = target
-                            playNeteaseSong(target, progress ?: 0L)
-                        } else if (target != null && target == songId && progress != null && kotlin.math.abs(progress - position) > 6_000L) {
-                            playback.seekTo(progress)
+                        if (localHold) Unit else if (remotePush.playing == false && playing) {
+                            playback.pause()
+                            reportedPlaying = false
+                            reportedPosition = remotePush.progress ?: position
+                            quietUntil = now + 1_500
+                        } else if (!localHold && remotePush.playing == true && !playing && (cursor == null || cursor == songId)) {
+                            playback.play()
+                            reportedPlaying = true
+                            quietUntil = now + 1_500
                         }
-                    }
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    if (songId != 0L && now - lastBeat > 30_000L) {
-                        netease.listenHeartbeat(current.roomId, songId, state.isPlaying, position)
-                        lastBeat = now
                     }
                 }
+                if (tick % 2 == 0) {
+                    val remote = runCatching { netease.listenSync(current.roomId) }.getOrNull()
+                    if (remote != null) {
+                        val remoteIds = remote.ids
+                        val cursor = remote.roomSongId?.takeIf { it > 0L } ?: remote.songId?.takeIf { it > 0L }
+                        val listDiffers = remoteIds.isNotEmpty() && remoteIds != roomIds
+                        if (!synced) {
+                            synced = true
+                            roomIds = remoteIds
+                            if (remoteIds != listenQueueIds() && cursor != null) {
+                                val songs = songsOf(remoteIds)
+                                val index = songs.indexOfFirst { it.id == cursor }.coerceAtLeast(0)
+                                if (songs.isNotEmpty()) {
+                                    playNeteaseQueue(
+                                        songs, index, shuffle = false, source = null,
+                                        startMs = if (songs[index].id == songId) position else remote.progress ?: 0L,
+                                        openPlayer = false, guardCurrent = false,
+                                    )
+                                }
+                            }
+                            reportedIds = listenQueueIds().ifEmpty { remoteIds }
+                            reportedSong = cursor ?: songId
+                            reportedPlaying = playback.state.value.isPlaying
+                            reportedPosition = playback.state.value.estimatedPosition()
+                            if (remote.seq > 0L) {
+                                if (remote.fromMe) netease.markListenSeq(remote.seq) else {
+                                    lastAppliedSeq.set(remote.seq - 1)
+                                }
+                            }
+                            quietUntil = now + 2_000
+                            deferPushUntil = now + 1_500
+                        } else if (listDiffers) {
+                            val wasPlaying = playing
+                            roomIds = remoteIds
+                            if (remoteIds != listenQueueIds()) {
+                                val songs = songsOf(remoteIds)
+                                if (songs.isNotEmpty()) {
+                                    val focus = cursor ?: songId
+                                    val index = songs.indexOfFirst { it.id == focus }.coerceAtLeast(0)
+                                    playNeteaseQueue(
+                                        songs, index, shuffle = false, source = null,
+                                        startMs = if (songs[index].id == songId) position else 0L,
+                                        openPlayer = false, guardCurrent = false,
+                                    )
+                                    if (!wasPlaying) playback.pause()
+                                    reportedIds = listenQueueIds().ifEmpty { remoteIds }
+                                    reportedSong = songs[index].id
+                                    reportedPlaying = playback.state.value.isPlaying
+                                    reportedPosition = playback.state.value.estimatedPosition()
+                                    deferPushUntil = now + 2_000
+                                    quietUntil = now + 2_500
+                                }
+                            } else {
+                                reportedIds = remoteIds
+                            }
+                        }
+                        if (remote.seq > 0L && remote.seq > lastAppliedSeq.get()) {
+                            if (remote.fromMe) {
+                                lastAppliedSeq.set(remote.seq)
+                            } else {
+                                val queued = pendingRemote.get()
+                                if (queued == null || remote.seq > queued.seq) pendingRemote.set(remote)
+                            }
+                        }
+                        if (remote.progress != null) lastRemoteProgress = remote.progress
+                        if (remote.playing != null) {
+                            lastRemotePlaying = remote.playing
+                            remotePlayingMirror = remote.playing
+                        }
+                        if (cursor != null && cursor > 0L) roomCursor = cursor
+                    }
+                }
+                val songChanged = songId != 0L && songId != reportedSong
+                var playToggled = songId != 0L && playing != reportedPlaying
+                val adoptedRemoteSong = songChanged && songId == roomCursor
+                val remoteAppliedRecently = remoteAppliedAt > 0L && now - remoteAppliedAt < 6_000L
+                val remoteEcho = playToggled && (remoteAppliedRecently || (remotePlayingMirror != null && playing == remotePlayingMirror))
+                if (remoteEcho) {
+                    reportedPlaying = playing
+                    reportedPosition = position
+                    lastRemotePlaying = playing
+                    remotePlayingMirror = playing
+                    playToggled = false
+                }
+                val pausedSongSwitch = songChanged && !playing && !adoptedRemoteSong
+                val pendingLocal = (songChanged || playToggled) && !adoptedRemoteSong && !remoteEcho
+                if ((now > quietUntil || (pendingLocal && !remoteAppliedRecently)) && synced && now > deferPushUntil) {
+                    var pushed = false
+                    val mine = listenQueueIds()
+                    val listChanged = mine.isNotEmpty() && mine != reportedIds
+                    if (listChanged || songChanged) {
+                        runCatching { netease.listenSyncList(current.roomId, mine, ++pushVersion, songId, position, netease.account.value?.userId ?: 0L) }
+                        reportedIds = mine
+                        if (roomIds.isEmpty()) roomIds = mine
+                        roomIds = mine
+                        pushed = true
+                    }
+                    if (pendingLocal) {
+                        localHoldUntil = now + 3_000L
+                        val nextSeq = ++pushSeq
+                        val previousSong = reportedSong
+                        reportedSong = songId
+                        reportedPlaying = playing
+                        reportedPosition = position
+                        if (songChanged) {
+                            roomCursor = songId
+                            runCatching { netease.listenCommand(current.roomId, "GOTO", 0L, true, previousSong, songId, nextSeq) }
+                            if (pausedSongSwitch) {
+                                playback.play()
+                                reportedPlaying = true
+                                localHoldUntil = now + 2_000L
+                            }
+                        } else {
+                            runCatching { netease.listenCommand(current.roomId, if (playing) "PLAY" else "PAUSE", position, playing, songId, songId, nextSeq) }
+                        }
+                        pushedInFlight = true
+                        pushedAt = now
+                        remotePlayingMirror = null
+                        lastPushPlaying = reportedPlaying
+                        lastPushSongId = songId
+                        quietUntil = now + 1_500
+                        pushed = true
+                    } else if (songId != 0L && playing && kotlin.math.abs(position - (reportedPosition + 3_000L)) > 8_000L) {
+                        runCatching { netease.listenCommand(current.roomId, "SEEK", position, true, songId, songId, ++pushSeq) }
+                        reportedPosition = position
+                        pushed = true
+                    }
+                    if (pushed) quietUntil = now + 2_500
+                }
+                if (pushedInFlight && now - pushedAt > 3_500L) {
+                    pushedInFlight = false
+                    val expectedPlaying = lastPushPlaying
+                    val expectedSong = lastPushSongId
+                    val remoteNow = runCatching { netease.listenSync(current.roomId) }.getOrNull()
+                    if (remoteNow != null) {
+                        val matchesIntent = remoteNow.fromMe &&
+                            (expectedPlaying == null || remoteNow.playing == expectedPlaying) &&
+                            (expectedSong == 0L || remoteNow.songId == expectedSong)
+                        if (matchesIntent) {
+                            netease.markListenSeq(remoteNow.seq)
+                        } else {
+                            val target = if (expectedSong != 0L) expectedSong else songId
+                            val wantPlay = expectedPlaying ?: playing
+                            runCatching {
+                                if (target != songId || (remoteNow.songId ?: 0L) != target) {
+                                    netease.listenCommand(current.roomId, "GOTO", 0L, wantPlay, songId, target, ++pushSeq)
+                                } else {
+                                    netease.listenCommand(current.roomId, if (wantPlay) "PLAY" else "PAUSE", position, wantPlay, target, target, ++pushSeq)
+                                }
+                            }
+                            quietUntil = now + 2_000
+                        }
+                    }
+                }
+                if (songId != 0L && now - lastBeat > 25_000L) {
+                    runCatching { netease.listenHeartbeat(current.roomId, songId, playing, position) }
+                    lastBeat = now
+                }
+                if (!com.olbyine.music.data.ListenTogetherIm.connected.value && now - lastImRetry > 15_000L) {
+                    lastImRetry = now
+                    launch {
+                        val chatRoom = current.chatRoomId?.takeIf { it.isNotBlank() }
+                            ?: runCatching { netease.listenStatus() }.getOrNull()?.takeIf { it.roomId == current.roomId }?.chatRoomId
+                        if (!chatRoom.isNullOrBlank()) {
+                            val im = runCatching { netease.listenImAccount() }.getOrNull()
+                            if (im != null) {
+                                com.olbyine.music.data.ListenTogetherIm.disconnect()
+                                com.olbyine.music.data.ListenTogetherIm.connect(im, chatRoom, current.roomId, netease.account.value)
+                            }
+                        }
+                    }
+                }
+                if (brokenListenRoom.getAndSet(false)) {
+                    message.value = "一起听房间状态不同步，正在重新加入"
+                }
+                if (peerLeftEvent.getAndSet(false)) {
+                    val summary = ListenTogetherSummary(
+                        songs = listenSessionSongs.size,
+                        minutes = ((System.currentTimeMillis() - sessionStart) / 60_000L).coerceAtLeast(1L),
+                        messages = com.olbyine.music.data.ListenTogetherIm.messages.value,
+                    )
+                    com.olbyine.music.data.ListenTogetherIm.disconnect()
+                    _listenTogether.value = ListenTogetherUiState(summary = summary)
+                    listenJob = null
+                    runCatching { netease.listenEnd(current.roomId) }
+                    break
+                }
                 if (tick % 4 == 0) {
-                    val fresh = runCatching { netease.listenStatus() }.getOrNull()?.takeIf { it.roomId == current.roomId }
-                        ?: runCatching { netease.listenCheck(current.roomId) }.getOrNull()
-                    if (fresh != null && fresh.users.isNotEmpty() && fresh.users != current.users) {
-                        val joined = fresh.users.filter { user -> current.users.none { it.userId == user.userId } && user.userId != netease.account.value?.userId }
-                        _listenTogether.value = _listenTogether.value.copy(room = current.copy(users = fresh.users))
-                        joined.firstOrNull()?.let { message.value = "${it.nickname} 加入了一起听" }
+                    val meId = netease.account.value?.userId ?: 0L
+                    var statusFailed = false
+                    val statusRoom = try {
+                        netease.listenStatus()
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) throw error
+                        statusFailed = true
+                        null
+                    }
+                    val fresh = statusRoom?.takeIf { it.roomId == current.roomId } ?: try {
+                        netease.listenCheck(current.roomId)
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) throw error
+                        statusFailed = true
+                        null
+                    }
+                    if (!statusFailed && statusRoom == null && runCatching { netease.signedIn }.getOrDefault(false)) {
+                        val summary = ListenTogetherSummary(
+                            songs = listenSessionSongs.size,
+                            minutes = ((System.currentTimeMillis() - sessionStart) / 60_000L).coerceAtLeast(1L),
+                            messages = com.olbyine.music.data.ListenTogetherIm.messages.value,
+                        )
+                        com.olbyine.music.data.ListenTogetherIm.disconnect()
+                        _listenTogether.value = ListenTogetherUiState(summary = summary)
+                        listenJob = null
+                        break
+                    }
+                    if (fresh != null) {
+                        val othersBefore = _listenTogether.value.room?.users?.count { it.userId != meId } ?: 0
+                        val othersNow = fresh.users.count { it.userId != meId }
+                        if (othersBefore > 0 && othersNow == 0) {
+                            message.value = "对方离开了房间"
+                            val summary = ListenTogetherSummary(
+                                songs = listenSessionSongs.size,
+                                minutes = ((System.currentTimeMillis() - sessionStart) / 60_000L).coerceAtLeast(1L),
+                                messages = com.olbyine.music.data.ListenTogetherIm.messages.value,
+                            )
+                            com.olbyine.music.data.ListenTogetherIm.disconnect()
+                            _listenTogether.value = ListenTogetherUiState(summary = summary)
+                            listenJob = null
+                            runCatching { netease.listenEnd(current.roomId) }
+                            break
+                        }
+                        if (fresh.users.isNotEmpty() && fresh.users != current.users) {
+                            val joined = fresh.users.filter { user -> current.users.none { it.userId == user.userId } && user.userId != meId }
+                            _listenTogether.value = _listenTogether.value.copy(room = current.copy(users = fresh.users))
+                            joined.firstOrNull()?.let { message.value = "${it.nickname} 加入了一起听" }
+                        }
                     }
                 }
                 tick++
@@ -2985,6 +3421,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
     fun saveNeteasePlaylistLocally() {
         val state = _netease.value
         val playlist = state.openPlaylist ?: return
@@ -3142,6 +3579,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setThemeMode(mode: ThemeMode) = settingsRepository.setThemeMode(mode)
     fun setLyricFontSize(value: Float) = settingsRepository.setLyricFontSize(value)
+    fun setLyricLineGap(value: Float) = settingsRepository.setLyricLineGap(value)
     fun setLyricOpacity(value: Float) = settingsRepository.setLyricInactiveOpacity(value)
     fun setLyricOffset(value: Long) = settingsRepository.setLyricOffsetMs(value)
 
@@ -3368,13 +3806,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun observeArtworkColors() {
         viewModelScope.launch {
-            combine(library.tracks, playback.state, _externalLyrics) { tracks, player, external ->
+            combine(library.tracks, playback.state, _externalLyrics, onlineTracks) { tracks, player, external, online ->
                 val listening = external.visible && external.nowPlaying != null
                 if (listening) {
                     external.nowPlaying?.let { ArtworkRequest(it.key, external.artworkPath) }
                 } else {
-                    tracks.firstOrNull { it.id == player.currentMediaId }
-                        ?.let { ArtworkRequest(it.id, it.coverPath) }
+                    val mediaId = player.currentMediaId ?: return@combine null
+                    val local = tracks.firstOrNull { it.id == mediaId }
+                    val onlineTrack = online[mediaId]
+                    val fullCover = player.currentArtwork?.takeIf { it.startsWith("file://") }?.let { Uri.parse(it).path }
+                    val path = local?.coverPath ?: onlineTrack?.coverPath?.takeIf(String::isNotBlank) ?: fullCover
+                    val url = path?.takeIf { it.startsWith("http", true) } ?: currentOnlineCoverUrl(mediaId)
+                    ArtworkRequest(mediaId, path ?: url)
                 }
             }.distinctUntilChanged().collectLatest { artwork ->
                 artworkColors.value = artworkPaletteRepository.colorsFor(
@@ -3382,6 +3825,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     coverPath = artwork?.coverPath,
                 )
             }
+        }
+    }
+
+    private fun currentOnlineCoverUrl(mediaId: String): String? {
+        val id = mediaId.substringAfter(':', "")
+        if (id.isBlank()) return null
+        return when {
+            mediaId.startsWith("ncm:") -> _netease.value.songs.firstOrNull { it.id.toString() == id }?.coverUrl
+            mediaId.startsWith("kw:") -> _kuwo.value.results.firstOrNull { it.id.toString() == id }?.coverUrl
+            else -> onlineTracks.value[mediaId]?.coverPath
         }
     }
 

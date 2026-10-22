@@ -20,6 +20,10 @@ class SettingsRepository(context: Context) {
         it.copy(lyricFontSize = value.coerceIn(20f, 48f))
     }
 
+    fun setLyricLineGap(value: Float) = update {
+        it.copy(lyricLineGap = value.coerceIn(1f, 2.4f))
+    }
+
     fun setLyricInactiveOpacity(value: Float) = update {
         it.copy(lyricInactiveOpacity = value.coerceIn(0.16f, 0.72f))
     }
@@ -94,6 +98,8 @@ class SettingsRepository(context: Context) {
 
     fun setShowSourceSwitch(value: Boolean) = update { it.copy(showSourceSwitch = value) }
 
+    fun setFloatingCoverButton(value: Boolean) = update { it.copy(floatingCoverButton = value) }
+
     fun setBackgroundStyle(value: String) = update { it.copy(backgroundStyle = if (value == "amll") "amll" else "ios") }
 
     fun setUiStyle(value: UiStyle) = update { it.copy(uiStyle = value) }
@@ -156,6 +162,7 @@ class SettingsRepository(context: Context) {
         preferences.edit()
             .putString(KEY_THEME, next.themeMode.name)
             .putFloat(KEY_LYRIC_SIZE, next.lyricFontSize)
+            .putFloat(KEY_LYRIC_GAP, next.lyricLineGap)
             .putFloat(KEY_LYRIC_OPACITY, next.lyricInactiveOpacity)
             .putLong(KEY_LYRIC_OFFSET, next.lyricOffsetMs)
             .putFloat(KEY_LYRIC_ALIGN, next.lyricAlignPosition)
@@ -193,6 +200,7 @@ class SettingsRepository(context: Context) {
             .putBoolean(KEY_LYRIC_DOUBLE_TAP_SEEK, next.lyricDoubleTapSeek)
             .putString(KEY_LYRIC_MV_STYLE, next.lyricMvStyle)
             .putBoolean(KEY_SOURCE_SWITCH, next.showSourceSwitch)
+            .putBoolean(KEY_FLOATING_COVER_BUTTON, next.floatingCoverButton)
             .putString(KEY_BACKGROUND_STYLE, next.backgroundStyle)
             .putString(KEY_UI_STYLE, next.uiStyle.name)
             .putString(KEY_LAYOUT_MODE, next.layoutMode)
@@ -254,6 +262,7 @@ class SettingsRepository(context: Context) {
         return UserSettings(
             themeMode = theme,
             lyricFontSize = f(KEY_LYRIC_SIZE, 30f),
+            lyricLineGap = f(KEY_LYRIC_GAP, 1.2f).coerceIn(1f, 2.4f),
             lyricInactiveOpacity = f(KEY_LYRIC_OPACITY, 0.38f),
             lyricOffsetMs = l(KEY_LYRIC_OFFSET, 0L),
             lyricAlignPosition = f(KEY_LYRIC_ALIGN, .5f).coerceIn(.15f, .85f),
@@ -291,6 +300,7 @@ class SettingsRepository(context: Context) {
             lyricDoubleTapSeek = b(KEY_LYRIC_DOUBLE_TAP_SEEK, true),
             lyricMvStyle = s(KEY_LYRIC_MV_STYLE, null).orEmpty(),
             showSourceSwitch = b(KEY_SOURCE_SWITCH, true),
+            floatingCoverButton = b(KEY_FLOATING_COVER_BUTTON, true),
             backgroundStyle = s(KEY_BACKGROUND_STYLE, null) ?: "ios",
             usbDirectDriver = b(KEY_USB_DIRECT, false),
             uiStyle = runCatching { UiStyle.valueOf(s(KEY_UI_STYLE, null) ?: UiStyle.IOS.name) }.getOrDefault(UiStyle.IOS),
@@ -365,6 +375,7 @@ class SettingsRepository(context: Context) {
         const val KEY_NETEASE_QUALITY = "netease_quality"
         const val KEY_THEME = "theme"
         const val KEY_LYRIC_SIZE = "lyric_size"
+        const val KEY_LYRIC_GAP = "lyric_gap"
         const val KEY_LYRIC_OPACITY = "lyric_opacity"
         const val KEY_LYRIC_OFFSET = "lyric_offset"
     const val KEY_LYRIC_ALIGN = "lyric_align"
@@ -396,6 +407,7 @@ class SettingsRepository(context: Context) {
         const val KEY_FLOATING_LYRICS_COLOR = "floating_lyrics_color"
         const val KEY_LYRIC_DOUBLE_TAP_SEEK = "lyric_double_tap_seek"
         const val KEY_LYRIC_MV_STYLE = "lyric_mv_style"
+        const val KEY_FLOATING_COVER_BUTTON = "floating_cover_button"
         const val KEY_SOURCE_SWITCH = "player_source_switch"
         const val KEY_PLAY_SHUFFLE = "play_shuffle"
         const val KEY_PLAY_REPEAT = "play_repeat"

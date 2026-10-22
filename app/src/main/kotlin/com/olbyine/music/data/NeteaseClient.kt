@@ -128,7 +128,14 @@ data class NeteaseWikiEntry(val title: String, val text: String, val imageUrl: S
 
 data class NeteaseWikiContribution(val name: String, val artists: String, val time: Long, val status: Int, val type: Int)
 
-data class NeteaseListenRoom(val roomId: String, val inviterId: Long, val users: List<NeteaseFriend>, val host: Boolean)
+data class NeteaseListenRoom(
+    val roomId: String,
+    val inviterId: Long,
+    val users: List<NeteaseFriend>,
+    val host: Boolean,
+    val chatRoomId: String? = null,
+    val startedAt: Long = 0L,
+)
 
 data class NeteaseArtist(val id: Long, val name: String, val pictureUrl: String?, val albumCount: Int)
 
@@ -1119,6 +1126,9 @@ class NeteaseClient(context: Context) {
 
     internal fun webCookie(): String? = cookie
 
+    @Volatile
+    var lastImRequestId: String = ""
+
     suspend fun listenStatus(): NeteaseListenRoom? = withContext(Dispatchers.IO) {
         if (cookie == null) return@withContext null
         val data = eapi("/api/listen/together/status/get", JSONObject()).optJSONObject("data") ?: return@withContext null
@@ -1143,7 +1153,7 @@ class NeteaseClient(context: Context) {
         require(cookie != null) { "请先登录网易云音乐" }
         val result = eapi("/api/listen/together/play/invitation/accept", JSONObject().put("refer", "inbox_invite").put("roomId", roomId).put("inviterId", inviterId.toString()))
         require(result.optInt("code") == 200) { result.optString("message").ifBlank { "无法加入房间（可能已结束）" } }
-        (result.optJSONObject("data")?.optJSONObject("roomInfo")?.let(::listenRoom) ?: NeteaseListenRoom(roomId, inviterId, emptyList(), false)).copy(host = false)
+        (result.optJSONObject("data")?.optJSONObject("roomInfo")?.let(::listenRoom) ?: NeteaseListenRoom(roomId, inviterId, emptyList(), false, result.optJSONObject("data")?.optString("chatRoomId"))).copy(host = false)
     }
 
     suspend fun listenEnd(roomId: String) = withContext(Dispatchers.IO) {
@@ -1151,20 +1161,38 @@ class NeteaseClient(context: Context) {
         Unit
     }
 
-    suspend fun listenCommand(roomId: String, type: String, progressMs: Long, playing: Boolean, formerSongId: Long, targetSongId: Long, seq: Int) =
-        withContext(Dispatchers.IO) {
-            val info = JSONObject().put("commandType", type).put("progress", progressMs).put("playStatus", if (playing) "PLAY" else "PAUSE")
-                .put("formerSongId", formerSongId.toString()).put("targetSongId", targetSongId.toString()).put("clientSeq", seq)
+    suspend fun listenCommand(
+        roomId: String,
+        type: String,
+        progressMs: Long,
+        playing: Boolean,
+        formerSongId: Long,
+        targetSongId: Long,
+        seq: Int,
+    ) = withContext(Dispatchers.IO) {
+        val info = JSONObject().put("commandType", type).put("progress", progressMs).put("playStatus", if (playing) "PLAY" else "PAUSE")
+            .put("formerSongId", formerSongId.toString()).put("targetSongId", targetSongId.toString()).put("clientSeq", seq)
             eapi("/api/listen/together/play/command/report", JSONObject().put("roomId", roomId).put("commandInfo", info.toString()))
             Unit
         }
 
-    suspend fun listenSyncList(roomId: String, songIds: List<Long>, version: Int) = withContext(Dispatchers.IO) {
+    suspend fun listenSyncList(
+        roomId: String,
+        songIds: List<Long>,
+        version: Int,
+        anchorSongId: Long = 0L,
+        anchorPosition: Long = -1L,
+        userId: Long = 0L,
+    ) = withContext(Dispatchers.IO) {
         val me = _account.value?.userId ?: 0L
         val ids = JSONArray().apply { songIds.forEach { put(it.toString()) } }
         val param = JSONObject().put("commandType", "REPLACE")
-            .put("version", JSONArray().put(JSONObject().put("userId", me).put("version", version)))
-            .put("anchorSongId", "").put("anchorPosition", -1).put("randomList", ids).put("displayList", ids)
+            .put("version", JSONArray().put(JSONObject().put("userId", if (userId > 0L) userId else me).put("version", version)))
+            .put("playMode", "ORDER_LOOP")
+            .put("anchorSongId", anchorSongId.takeIf { it > 0L }?.toString().orEmpty())
+            .put("anchorPosition", anchorPosition.takeIf { it >= 0L } ?: -1L)
+            .put("randomList", JSONArray())
+            .put("displayList", ids)
         eapi("/api/listen/together/sync/list/command/report", JSONObject().put("roomId", roomId).put("playlistParam", param.toString()))
         Unit
     }
@@ -1179,16 +1207,164 @@ class NeteaseClient(context: Context) {
         Unit
     }
 
-    suspend fun listenPlaylist(roomId: String): Triple<List<Long>, Long?, Long?> = withContext(Dispatchers.IO) {
-        val data = eapi("/api/listen/together/sync/playlist/get", JSONObject().put("roomId", roomId)).optJSONObject("data")
-            ?: return@withContext Triple(emptyList<Long>(), null, null)
-        val playlist = data.optJSONObject("playlist")
-        val list = playlist?.optJSONObject("displayList")?.optJSONArray("result")
-        val ids = (0 until (list?.length() ?: 0)).mapNotNull { list?.optString(it)?.toLongOrNull() }
-        val play = data.optJSONObject("playInfo") ?: data.optJSONObject("currentPlay") ?: playlist?.optJSONObject("playInfo")
-        val current = (play?.optString("songId") ?: play?.optString("targetSongId"))?.toLongOrNull()
-        val progress = play?.optLong("progress", -1)?.takeIf { it >= 0 }
-        Triple(ids, current, progress)
+    data class NeteaseListenSync(
+        val ids: List<Long>,
+        val songId: Long? = null,
+        val progress: Long? = null,
+        val playing: Boolean? = null,
+        val seq: Long = 0L,
+        val fromMe: Boolean = false,
+        val commandType: String? = null,
+        val listed: Boolean = true,
+        val roomSongId: Long? = null,
+    )
+
+    @Volatile
+    internal var lastListenSeq: Long = 0L
+
+    fun appliedListenSeq(): Long = lastListenSeq
+
+    fun markListenSeq(seq: Long) {
+        if (seq > lastListenSeq) lastListenSeq = seq
+    }
+
+    @Volatile
+    var lastListenSyncRaw: String? = null
+        private set
+
+    data class ListenImAccount(val accId: String, val token: String, val addresses: List<String>)
+
+    suspend fun listenImAccount(): ListenImAccount? = withContext(Dispatchers.IO) {
+        val musicU = cookie ?: return@withContext null
+        val now = System.currentTimeMillis()
+        val requestId = "${now}_${(now % 1000).toString().padStart(4, '0')}"
+        lastImRequestId = requestId
+        val cookieHeader = "MUSIC_U=$musicU; osver=15.5; os=osx; appver=3.1.10.5100; channel=netease; versioncode=140; " +
+            "buildver=${now / 1000}; resolution=1920x1080; requestId=$requestId"
+        val request = Request.Builder()
+            .url("https://interface3.music.163.com/api/middle/im/token/get?bizName=music_listenTogether")
+            .header("Cookie", cookieHeader)
+            .header("Accept", "application/json")
+            .header("Accept-Language", "zh-CN,zh;q=0.9")
+            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+            .build()
+        runCatching {
+            client.newCall(request).execute().use { response ->
+                val body = runCatching { JSONObject(response.body?.string().orEmpty().ifBlank { "{}" }) }.getOrNull() ?: return@runCatching null
+                val data = body.optJSONObject("data") ?: return@runCatching null
+                val accId = data.optString("accId").takeIf { it.isNotBlank() && it != "null" } ?: return@runCatching null
+                val token = data.optString("token").takeIf { it.isNotBlank() && it != "null" } ?: return@runCatching null
+                val addresses = data.optJSONArray("addr")?.let { array ->
+                    (0 until array.length()).mapNotNull { array.optString(it).takeIf { value -> value.isNotBlank() } }
+                }.orEmpty()
+                ListenImAccount(accId, token, addresses)
+            }
+        }.getOrNull()
+    }
+
+    suspend fun listenSync(roomId: String): NeteaseListenSync? = withContext(Dispatchers.IO) {
+        val response = eapi("/api/listen/together/sync/playlist/get", JSONObject().put("roomId", roomId))
+        lastListenSyncRaw = response.toString()
+        val data = response.optJSONObject("data") ?: return@withContext null
+        val playlist = data.optJSONObject("playlist") ?: data
+        val play = listOfNotNull(
+            data.optJSONObject("playCommand"),
+            data.optJSONObject("playInfo"),
+            data.optJSONObject("currentPlay"),
+            data.optJSONObject("commandInfo"),
+            playlist.optJSONObject("playInfo"),
+            playlist.optJSONObject("currentPlay"),
+            data.optJSONObject("roomInfo")?.optJSONObject("playInfo"),
+            data.optJSONObject("roomInfo")?.optJSONObject("playCommand"),
+        ).firstOrNull { it.listenLong("songId", "targetSongId", "currentSongId") != null } ?: findPlayState(data)
+        val status = play?.listenString("playStatus", "playState", "status", "playOrPause")
+        val playing = when {
+            play?.has("playing") == true -> play.optBoolean("playing")
+            status == null -> null
+            status.equals("PLAY", true) || status.equals("PLAYING", true) -> true
+            status.equals("PAUSE", true) || status.equals("PAUSED", true) -> false
+            else -> null
+        }
+        val seq = play?.listenLong("serverSeq") ?: 0L
+        val fromMe = play?.listenLong("userId")?.let { it == (_account.value?.userId ?: 0L) } ?: false
+        if (seq > 0L && seq > lastListenSeq) lastListenSeq = seq
+        val anchorSong = playlist.listenLong("anchorSongId", "anchor_song_id") ?: data.listenLong("anchorSongId")
+        val anchorPosition = (playlist.listenLong("anchorPosition", "anchor_position") ?: data.listenLong("anchorPosition"))?.takeIf { it >= 0 }
+        NeteaseListenSync(
+            ids = playlist.listenIds(),
+            songId = play?.listenLong("songId", "targetSongId", "currentSongId") ?: anchorSong,
+            progress = play?.listenLong("progress", "position", "playPosition", "currentPosition")?.takeIf { it >= 0 } ?: anchorPosition,
+            playing = playing,
+            seq = seq,
+            fromMe = fromMe,
+            commandType = play?.listenString("commandType")?.uppercase(),
+            listed = true,
+            roomSongId = anchorSong?.takeIf { it > 0L } ?: play?.listenLong("formerSongId"),
+        )
+    }
+
+    fun mergeListenCommand(command: com.olbyine.music.data.ListenTogetherIm.Command): NeteaseListenSync {
+        if ((command.seq ?: 0L) > lastListenSeq) lastListenSeq = command.seq ?: 0L
+        val me = _account.value?.userId ?: 0L
+        return NeteaseListenSync(
+            ids = emptyList(),
+            songId = command.songId,
+            progress = command.progress,
+            playing = command.playing,
+            seq = command.seq ?: 0L,
+            fromMe = command.from != null && me != 0L && command.from.toLongOrNull() == me,
+            commandType = command.type,
+            listed = false,
+        )
+    }
+
+    private fun findPlayState(root: JSONObject): JSONObject? {
+        var found: JSONObject? = null
+        fun visit(node: JSONObject?, depth: Int) {
+            if (node == null || found != null || depth > 5) return
+            val song = node.listenLong("songId", "targetSongId", "currentSongId")
+            val status = node.listenString("playStatus", "playState", "playOrPause")
+            val progress = node.listenLong("progress", "playPosition", "currentPosition")
+            if (song != null && (status != null || progress != null)) {
+                found = node
+                return
+            }
+            val keys = node.keys()
+            while (keys.hasNext()) {
+                when (val value = node.opt(keys.next())) {
+                    is JSONObject -> visit(value, depth + 1)
+                    is JSONArray -> for (index in 0 until value.length()) visit(value.optJSONObject(index), depth + 1)
+                    else -> Unit
+                }
+                if (found != null) return
+            }
+        }
+        visit(root, 0)
+        return found
+    }
+
+    private fun JSONObject.listenLong(vararg keys: String): Long? =
+        keys.firstNotNullOfOrNull { key -> optString(key).trim().takeIf { it.isNotBlank() && it != "null" }?.toLongOrNull() }
+
+    private fun JSONObject.listenString(vararg keys: String): String? =
+        keys.firstNotNullOfOrNull { key -> optString(key).trim().takeIf { it.isNotBlank() && it != "null" } }
+
+    private fun JSONObject.listenIds(): List<Long> {
+        val array = listOf(
+            optJSONObject("displayList")?.optJSONArray("result"),
+            optJSONArray("displayList"),
+            optJSONObject("displayList")?.optJSONArray("ids"),
+            optJSONObject("randomList")?.optJSONArray("result"),
+            optJSONArray("result"),
+        ).firstOrNull { it != null && it.length() > 0 } ?: return emptyList()
+        return (0 until array.length()).mapNotNull { index ->
+            when (val row = array.opt(index)) {
+                is String -> row.toLongOrNull()
+                is Number -> row.toLong()
+                is JSONObject -> row.listenLong("id", "songId")
+                else -> null
+            }
+        }
     }
 
     fun listenInviteLink(room: NeteaseListenRoom, songId: Long?) =
@@ -1196,6 +1372,10 @@ class NeteaseClient(context: Context) {
 
     private fun listenRoom(room: JSONObject): NeteaseListenRoom = NeteaseListenRoom(
         roomId = room.optString("roomId"),
+        chatRoomId = room.optString("chatRoomId").takeIf { it.isNotBlank() && it != "null" },
+        startedAt = listOf("createTime", "startTime", "createAt", "ctime")
+            .firstNotNullOfOrNull { key -> room.optLong(key).takeIf { it > 0L } }
+            ?.let { if (it < 10_000_000_000L) it * 1000L else it } ?: 0L,
         inviterId = room.optLong("creatorId", room.optLong("inviterId")),
         users = room.optJSONArray("roomUsers").objects().map { user ->
             NeteaseFriend(user.optLong("userId"), user.optString("nickname"), user.optString("avatarUrl").https()?.let { "$it?param=100y100" })

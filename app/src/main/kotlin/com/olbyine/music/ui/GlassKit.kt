@@ -52,6 +52,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -82,6 +83,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
@@ -364,8 +366,14 @@ internal fun GlassBottomSheet(
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val anchored = remember(sheetState) { mutableIntStateOf(0) }
+    LaunchedEffect(anchored.intValue, sheetState.isVisible) {
+        if (anchored.intValue > 0 && sheetState.isVisible) runCatching { sheetState.expand() }
+    }
     if (LocalStyleSpec.current.style == UiStyle.MATERIAL) {
-        ModalBottomSheet(onDismissRequest = onDismissRequest, sheetState = sheetState, content = content)
+        ModalBottomSheet(onDismissRequest = onDismissRequest, sheetState = sheetState) {
+            Column(Modifier.onSizeChanged { anchored.intValue = it.height }) { content() }
+        }
         return
     }
     val blur = rememberWindowBlurSupported()
@@ -387,7 +395,9 @@ internal fun GlassBottomSheet(
     ) {
         if (blur) WindowBlurBehind(radius = 36.dp) { shown.floatValue }
         Column(
-            Modifier.onGloballyPositioned { coordinates ->
+            Modifier
+                .onSizeChanged { size -> anchored.intValue = size.height }
+                .onGloballyPositioned { coordinates ->
                 val window = coordinates.findRootCoordinates().size.height.toFloat()
                 val top = coordinates.positionInRoot().y
                 val height = coordinates.size.height.toFloat().coerceAtLeast(1f)

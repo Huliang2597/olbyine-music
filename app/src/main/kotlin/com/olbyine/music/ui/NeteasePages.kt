@@ -86,7 +86,11 @@ private val PageRed = Color(0xFFE5303C)
 
 internal sealed interface NcmRoute {
     data class Chat(val thread: NeteaseThread) : NcmRoute
-    data class Artist(val id: Long?, val name: String) : NcmRoute
+    data class Artist(
+        val id: Long?,
+        val name: String,
+        val coArtists: List<Pair<Long, String>> = emptyList(),
+    ) : NcmRoute
     data class Web(val url: String) : NcmRoute
     data class Profile(val userId: Long) : NcmRoute
     data class Collection(val summary: NeteasePlaylistSummary) : NcmRoute
@@ -130,6 +134,8 @@ internal fun NeteaseOverlayHost(
                     onPlay = { songs, index -> onPlay(songs, index, false) },
                     onOpenAlbum = { onPush(NcmRoute.Collection(it)) },
                     onAccount = { onPush(NcmRoute.Profile(it)) },
+                    relatedArtists = route.coArtists,
+                    onOpenArtist = { id, name -> onPush(NcmRoute.Artist(id, name)) },
                 )
                 is NcmRoute.Profile -> NeteaseProfileScreen(client, route.userId, onBack = onPop, onPush = onPush)
                 is NcmRoute.Collection -> NeteaseCollectionScreen(client, route.summary, currentTrackId, onBack = onPop, onPush = onPush, onPlay = onPlay)

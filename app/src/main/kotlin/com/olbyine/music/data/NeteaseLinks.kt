@@ -5,8 +5,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal object NeteaseLinks {
+    private val URL_IN_TEXT = Regex("""https?://[^\s，,。、"“”'）)】\]]+""")
+
+    fun extractUrl(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("http", true)) return trimmed
+        val match = URL_IN_TEXT.find(trimmed)?.value ?: return trimmed
+        return match.trimEnd('.', '。', ',', '，', ')', '）', ']', '】')
+    }
+
     fun resolve(raw: String): NeteaseTarget? {
-        val url = raw.trim()
+        val url = extractUrl(raw)
         if (url.isBlank()) return null
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return null
         val scheme = uri.scheme?.lowercase()

@@ -589,6 +589,7 @@ private fun NeteasePlaylistPage(
                 }
                 val liked = song.id in state.liked
                 val openArtist = LocalOpenArtist.current
+                val openArtistWith = LocalOpenArtistWith.current
                 val openLink = LocalNeteaseLinks.current
                 val artistName = song.artists.firstOrNull().orEmpty()
                 HeartWithMenu(
@@ -599,7 +600,18 @@ private fun NeteasePlaylistPage(
                     idleColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     iconSize = 20.dp,
                     minSize = 40.dp,
-                    onOpenArtist = if (openArtist != null) ({ openArtist(song.artistIds.firstOrNull(), artistName) }) else null,
+                    onOpenArtist = if (openArtist != null || openArtistWith != null) ({
+                    val pairs = song.artistIds.zip(song.artists).filter { it.first > 0L }
+                    val id = song.artistIds.firstOrNull()
+                    if (openArtistWith != null) openArtistWith(id, artistName, pairs)
+                    else openArtist?.invoke(id, artistName)
+                }) else null,
+                    artistChoices = { song.artistIds.zip(song.artists) },
+                    onOpenArtistId = if (openArtist != null || openArtistWith != null) ({ id, name ->
+                        val pairs = song.artistIds.zip(song.artists).filter { it.first > 0L }
+                        if (openArtistWith != null) openArtistWith(id, name, pairs)
+                        else openArtist?.invoke(id, name)
+                    }) else null,
                     onOpenAlbum = if (openLink != null && song.albumId > 0) ({
                         openLink(com.olbyine.music.data.NeteaseTarget.Album(song.albumId))
                     }) else null,

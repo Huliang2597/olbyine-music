@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package com.olbyine.music.ui
 
@@ -60,6 +60,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Check
@@ -68,6 +70,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -80,6 +83,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -135,6 +139,8 @@ internal val LocalNeteaseLinks = staticCompositionLocalOf<((NeteaseTarget) -> Un
 internal val LocalNeteaseChat = staticCompositionLocalOf<((NeteaseThread) -> Unit)?> { null }
 
 internal val LocalOpenArtist = staticCompositionLocalOf<((Long?, String) -> Unit)?> { null }
+
+internal val LocalOpenArtistWith = staticCompositionLocalOf<((Long?, String, List<Pair<Long, String>>) -> Unit)?> { null }
 
 @Composable
 internal fun NeteaseChatScreen(client: NeteaseClient, thread: NeteaseThread, onBack: () -> Unit) {
@@ -505,6 +511,8 @@ internal fun NeteaseArtistScreen(
     onPlay: (List<NeteaseSong>, Int) -> Unit,
     onOpenAlbum: (NeteasePlaylistSummary) -> Unit,
     onAccount: (Long) -> Unit = {},
+    relatedArtists: List<Pair<Long, String>> = emptyList(),
+    onOpenArtist: (Long?, String) -> Unit = { _, _ -> },
 ) {
     val (resolved, retryId) = rememberLoad(artistId, artistName) { artistId ?: client.findArtist(artistName)?.id ?: error("网易云上没有找到「$artistName」") }
     val id = resolved.value
@@ -512,6 +520,13 @@ internal fun NeteaseArtistScreen(
     val (songs, _) = rememberLoad(id) { id?.let { client.artistTopSongs(it) }.orEmpty() }
     val (albums, _) = rememberLoad(id) { id?.let { client.artistAlbums(it) }.orEmpty() }
     var tab by rememberSaveable(id) { mutableStateOf(ArtistTab.SONGS) }
+    val roster = remember(relatedArtists, artistName) {
+        (listOf<Pair<Long?, String>>(artistId to artistName) + relatedArtists.map { it.first as Long? to it.second })
+            .filter { it.second.isNotBlank() }
+            .distinctBy { it.second }
+    }
+    val rosterIndex = remember(roster, artistName) { roster.indexOfFirst { it.second == artistName }.coerceAtLeast(0) }
+    val hasSiblings = roster.size > 1
     val colors = MaterialTheme.colorScheme
     val artist = home.value
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -612,6 +627,26 @@ internal fun NeteaseArtistScreen(
                             }
                             if (artist.briefDesc.isBlank() && artist.sections.isEmpty()) {
                                 Text("网易云上还没有这位艺人的介绍", color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            val siblings = roster.filter { it.second != artistName }
+                            if (siblings.isNotEmpty()) {
+                                Spacer(Modifier.height(18.dp))
+                                Text("合作艺人", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.height(8.dp))
+                                androidx.compose.foundation.layout.FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    siblings.forEach { artistEntry ->
+                                        Box(
+                                            Modifier.clip(RoundedCornerShape(50)).background(colors.onSurface.copy(alpha = .08f))
+                                                .clickable { onOpenArtist(artistEntry.first, artistEntry.second) }
+                                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                                        ) {
+                                            Text(artistEntry.second, style = MaterialTheme.typography.labelLarge, color = colors.onSurface)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1053,11 +1088,21 @@ internal fun ListenTogetherSheet(
     onLogin: () -> Unit,
     onMessage: (String) -> Unit,
     onDismiss: () -> Unit,
+    onDismissSummary: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var historyOpen by remember { mutableStateOf(false) }
     var link by remember { mutableStateOf("") }
     var inviting by remember { mutableStateOf(false) }
+    var syncRaw by remember { mutableStateOf<String?>(null) }
+    var clock by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(15_000)
+            clock = System.currentTimeMillis()
+        }
+    }
     val selected = remember { mutableStateListOf<Long>() }
     val colors = MaterialTheme.colorScheme
     val me = client.account.value?.userId
@@ -1069,7 +1114,7 @@ internal fun ListenTogetherSheet(
                 Text("网易云一起听", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             }
             Text(
-                "和好友同步收听网易云上的歌。房主切歌、暂停、拖动进度会同步到房间；本地歌曲不会同步。",
+                "和好友同步收听网易云上的歌。双方切歌、暂停、拖动进度都会同步给对方；本地歌曲不会同步。",
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
             )
@@ -1097,6 +1142,17 @@ internal fun ListenTogetherSheet(
                             RoomAvatar(null, "等待加入")
                         } else {
                             others.forEach { user -> RoomAvatar(user.avatarUrl, user.nickname) }
+                        }
+                    }
+                    val since = state.startedAt.takeIf { it > 0L }
+                    if (since != null) {
+                        val minutes = ((clock - since) / 60_000L).coerceAtLeast(0L)
+                        Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.Center) {
+                            Text(
+                                if (minutes <= 0L) "一起听了 不到 1 分钟" else "一起听了 ${togetherSpan(minutes)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colors.onSurfaceVariant,
+                            )
                         }
                     }
                     Spacer(Modifier.height(14.dp))
@@ -1129,7 +1185,7 @@ internal fun ListenTogetherSheet(
                             Text("当前播放的不是网易云歌曲，房间里暂时没有内容。", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
                         }
                     } else {
-                        Text("正在跟随房主播放。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                        Text("已和对方同步，双方都能切歌和暂停。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                     }
                     others.firstOrNull()?.let { partner ->
                         Spacer(Modifier.height(16.dp))
@@ -1137,16 +1193,121 @@ internal fun ListenTogetherSheet(
                         Spacer(Modifier.height(6.dp))
                         RoomChat(client, partner)
                     }
-                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "同步诊断",
+                        Modifier.padding(top = 12.dp).clip(CircleShape).clickable {
+                            val im = com.olbyine.music.data.ListenTogetherIm
+                            val chat = im.diagnostics() + "\n房间 chatRoomId：${room.chatRoomId ?: "无"}"
+                            syncRaw = chat + "\n\n" + (client.lastListenSyncRaw ?: "还没有拉到房间状态")
+                        }.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
                     PillButton(if (room.host) "结束房间" else "退出房间", onLeave, style = PillStyle.OUTLINED, modifier = Modifier.fillMaxWidth())
+                }
+            }
+            syncRaw?.let { raw ->
+                OlbyineDialog(
+                    onDismissRequest = { syncRaw = null },
+                    title = "一起听同步诊断",
+                    confirmButton = { GlassTextButton(onClick = { syncRaw = null }) { Text("关闭") } },
+                    dismissButton = {
+                        GlassTextButton(onClick = { copyRoomText(context, raw) }) {
+                            Text("复制")
+                        }
+                    },
+                ) {
+                    Text(raw, style = MaterialTheme.typography.labelSmall, modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()))
                 }
             }
             state.message?.let { Text(it, Modifier.padding(top = 10.dp), color = colors.error, style = MaterialTheme.typography.bodySmall) }
             Spacer(Modifier.navigationBarsPadding().height(16.dp))
         }
     }
+
+    state.summary?.let { summary ->
+        OlbyineDialog(
+            onDismissRequest = onDismissSummary,
+            title = if (summary.selfLeft) "你已退出一起听" else "对方已退出一起听",
+            confirmButton = { GlassTextButton(onClick = onDismissSummary) { Text("完成") } },
+            dismissButton = {
+                GlassTextButton(onClick = { historyOpen = !historyOpen }) {
+                    Text(if (historyOpen) "收起记录" else "查看聊天记录")
+                }
+            },
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SummaryStat("本次一起听了", "${summary.songs}", "首", Modifier.weight(1f))
+                    SummaryStat("本次陪伴彼此", togetherSpan(summary.minutes), "", Modifier.weight(1f))
+                }
+                if (historyOpen) {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "聊天记录",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 240.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(colors.onSurface.copy(alpha = .04f))
+                            .verticalScroll(rememberScrollState())
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (summary.messages.isEmpty()) {
+                            Text("这次没有聊天记录", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                        }
+                        summary.messages.forEach { chat ->
+                            Column(
+                                Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (chat.mine) colors.primary.copy(alpha = .10f) else colors.surfaceContainerHighest.copy(alpha = .6f))
+                                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        chat.nick.ifBlank { if (chat.mine) "我" else "对方" },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.onSurface,
+                                    )
+                                    Text(
+                                        " · " + togetherClock(chat.time),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colors.onSurfaceVariant,
+                                    )
+                                }
+                                Spacer(Modifier.height(2.dp))
+                                Text(chat.text, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
+@Composable
+private fun SummaryStat(label: String, value: String, unit: String, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier.clip(RoundedCornerShape(16.dp)).background(colors.onSurface.copy(alpha = .05f)).padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            if (unit.isNotBlank()) {
+                Text(unit, Modifier.padding(start = 2.dp, bottom = 3.dp), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            }
+        }
+    }
+}
 @Composable
 private fun RoomAvatar(url: String?, name: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
@@ -1160,8 +1321,100 @@ private fun RoomAvatar(url: String?, name: String) {
 
 @Composable
 private fun RoomChat(client: NeteaseClient, partner: NeteaseFriend) {
+    val realtime by com.olbyine.music.data.ListenTogetherIm.connected.collectAsState()
+    if (realtime) RoomChatRealtime() else RoomChatDirect(client, partner)
+}
+
+private fun togetherSpan(minutes: Long): String {
+    val safe = minutes.coerceAtLeast(0L)
+    val hours = safe / 60L
+    val rest = safe % 60L
+    return when {
+        hours > 0L && rest > 0L -> "${hours} 小时 ${rest} 分钟"
+        hours > 0L -> "${hours} 小时"
+        rest > 0L -> "${rest} 分钟"
+        else -> "不到 1 分钟"
+    }
+}
+
+private fun togetherClock(time: Long): String {
+    val calendar = java.util.Calendar.getInstance().apply { timeInMillis = time }
+    return "%02d:%02d".format(calendar.get(java.util.Calendar.HOUR_OF_DAY), calendar.get(java.util.Calendar.MINUTE))
+}
+
+private fun copyRoomText(context: android.content.Context, text: String) {
+    runCatching {
+        val manager = context.applicationContext.getSystemService(android.content.ClipboardManager::class.java)
+        manager?.setPrimaryClip(android.content.ClipData.newPlainText("一起听消息", text))
+    }
+    android.widget.Toast.makeText(context, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+}
+
+@Composable
+private fun RoomChatRealtime() {
+    val messages by com.olbyine.music.data.ListenTogetherIm.messages.collectAsState()
+    var draft by rememberSaveable { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
+    val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(colors.onSurface.copy(alpha = .05f)).padding(10.dp)) {
+        Text(
+            "一起听房间消息",
+            Modifier.padding(start = 4.dp, bottom = 6.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant,
+        )
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 220.dp), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (messages.isEmpty()) item { Text("打个招呼吧", Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
+            itemsIndexed(messages, key = { index, it -> "$index:${it.time}" }) { index, message ->
+                val itemKey = "$index:${message.time}"
+                Box(Modifier.fillMaxWidth(), contentAlignment = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart) {
+                    Column(horizontalAlignment = if (message.mine) Alignment.End else Alignment.Start) {
+                        if (!message.mine && message.nick.isNotBlank()) {
+                            Text(message.nick, Modifier.padding(start = 6.dp, bottom = 2.dp), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                        }
+                        Text(
+                            message.text,
+                            Modifier.widthIn(max = 260.dp).clip(RoundedCornerShape(14.dp))
+                                .background(if (message.mine) colors.primary else colors.onSurface.copy(alpha = .08f))
+                                .combinedClickable(onClick = {}, onLongClick = { menuFor = itemKey })
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            color = if (message.mine) colors.onPrimary else colors.onSurface,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        OlbyineDropdownMenu(expanded = menuFor == itemKey, onDismissRequest = { menuFor = null }) {
+                            GlassMenuItem("复制", { menuFor = null; copyRoomText(context, message.text) }, icon = Icons.Rounded.ContentCopy)
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { OlbyineTextField(draft, { draft = it }, "说点什么…") }
+            Spacer(Modifier.width(8.dp))
+            OlbyineIconButton(Icons.AutoMirrored.Rounded.Send, "发送", {
+                val text = draft.trim()
+                if (text.isNotEmpty()) {
+                    com.olbyine.music.data.ListenTogetherIm.send(text)
+                    draft = ""
+                }
+            }, size = 44.dp, container = colors.primary, tint = colors.onPrimary, enabled = draft.isNotBlank())
+        }
+    }
+}
+
+@Composable
+private fun RoomChatDirect(client: NeteaseClient, partner: NeteaseFriend) {
+
     val messages = remember(partner.userId) { mutableStateListOf<NeteaseMessage>() }
     var draft by remember(partner.userId) { mutableStateOf("") }
+    var menuFor by remember(partner.userId) { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     var sending by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -1181,16 +1434,22 @@ private fun RoomChat(client: NeteaseClient, partner: NeteaseFriend) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(colors.onSurface.copy(alpha = .05f)).padding(10.dp)) {
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 220.dp), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (messages.isEmpty()) item { Text("打个招呼吧", Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
-            itemsIndexed(messages, key = { index, it -> "$index:${it.time}" }) { _, message ->
+            itemsIndexed(messages, key = { index, it -> "$index:${it.time}" }) { index, message ->
+                val itemKey = "$index:${message.time}"
+                val shown = message.text.ifBlank { message.card?.let { "[${it.label}] ${it.title}" }.orEmpty() }
                 Box(Modifier.fillMaxWidth(), contentAlignment = if (message.fromMe) Alignment.CenterEnd else Alignment.CenterStart) {
                     Text(
-                        message.text.ifBlank { message.card?.let { "[${it.label}] ${it.title}" }.orEmpty() },
+                        shown,
                         Modifier.widthIn(max = 260.dp).clip(RoundedCornerShape(14.dp))
                             .background(if (message.fromMe) colors.primary else colors.onSurface.copy(alpha = .08f))
+                            .combinedClickable(onClick = {}, onLongClick = { menuFor = itemKey })
                             .padding(horizontal = 12.dp, vertical = 7.dp),
                         color = if (message.fromMe) colors.onPrimary else colors.onSurface,
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    OlbyineDropdownMenu(expanded = menuFor == itemKey, onDismissRequest = { menuFor = null }) {
+                        GlassMenuItem("复制", { menuFor = null; copyRoomText(context, shown) }, icon = Icons.Rounded.ContentCopy)
+                    }
                 }
             }
         }

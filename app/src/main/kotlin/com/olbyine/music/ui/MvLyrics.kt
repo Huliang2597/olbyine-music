@@ -151,6 +151,7 @@ private fun layoutGlyphs(
     style: TextStyle,
     width: Float,
     fontPx: Float,
+    lineGap: Float,
     alignCenter: Boolean,
 ): MvLayout {
     val advances = glyphs.map { if (it.space) fontPx * .32f else measurer.measure(it.text, style).size.width.toFloat() }
@@ -182,7 +183,7 @@ private fun layoutGlyphs(
         rowWidth += w
     }
     if (row.isNotEmpty()) rows += row
-    val lineHeight = fontPx * 1.32f
+    val lineHeight = fontPx * 1.1f * lineGap.coerceIn(1f, 2.4f)
     rows.forEachIndexed { r, units ->
         val indices = units.flatMap { it.toList() }.let { list ->
             var s = 0
@@ -210,6 +211,7 @@ internal fun MvLyricsView(
     offsetMs: Long,
     active: Boolean,
     showTranslation: Boolean,
+    lineGap: Float = 1.2f,
     style: MvStyle,
     modifier: Modifier = Modifier,
     onTap: () -> Unit = {},
@@ -265,12 +267,12 @@ internal fun MvLyricsView(
         val smallStyle = mainStyle.copy(fontSize = mainStyle.fontSize * .42f, fontWeight = FontWeight.SemiBold, fontStyle = FontStyle.Normal)
         val subStyle = TextStyle(fontSize = (if (landscape) 16 else 15).sp, color = accent.copy(alpha = .85f), fontWeight = FontWeight.Medium)
         val lines = document.lines
-        val layouts = remember(document, widthPx, heightPx, style) { HashMap<Int, MvLayout>() }
+        val layouts = remember(document, widthPx, heightPx, style, lineGap) { HashMap<Int, MvLayout>() }
         fun layoutOf(index: Int): MvLayout? {
             val line = lines.getOrNull(index)?.takeIf { it.text.isNotBlank() } ?: return null
             return layouts.getOrPut(index) {
                 val next = lines.getOrNull(index + 1)?.startMs ?: (line.startMs + 4_000)
-                layoutGlyphs(timedGlyphs(line, next, index + 1), measurer, mainStyle, usable, fontPx, alignCenter = style != MvStyle.EDITORIAL)
+                layoutGlyphs(timedGlyphs(line, next, index + 1), measurer, mainStyle, usable, fontPx, lineGap, alignCenter = style != MvStyle.EDITORIAL)
             }
         }
         val glyphCache = remember(widthPx, heightPx, style, accent) { HashMap<String, TextLayoutResult>() }

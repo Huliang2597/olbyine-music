@@ -34,6 +34,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.EditNote
@@ -92,17 +94,30 @@ internal fun ArtistAlbumPage(
     onSaveArtist: (name: String, bio: String, image: Uri?) -> Unit,
     onSaveAlbum: (title: String, artist: String, description: String, releaseDate: String, image: Uri?) -> Unit,
     onMatch: () -> Unit,
-    onArtistHome: (() -> Unit)? = null,
+    onArtistHome: ((String) -> Unit)? = null,
     localComposerCount: Int = 0,
     localAlbumCount: Int = 0,
     onLocalComposer: (() -> Unit)? = null,
     onLocalAlbum: (() -> Unit)? = null,
-    onAppear: () -> Unit = {},
+    onAppear: suspend (String) -> ArtistInfo? = { null },
     wiki: (@Composable () -> Unit)? = null,
+    artistRoster: List<String> = emptyList(),
 ) {
-    LaunchedEffect(track.id) { onAppear() }
-    val artistName = track.artist.split(" / ", "/", "、", ";", "&").first().trim().ifBlank { track.artist }
-    val artist by produceState<ArtistInfo?>(null, artistName, revision) { value = loadArtist(artistName) }
+    val roster = remember(track.artist, artistRoster) {
+        (track.artist.split(" / ", "/", "、", ";", "&").map { it.trim() } + artistRoster)
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+    var rosterIndex by rememberSaveable(track.id) { mutableStateOf(0) }
+    val artistName = roster.getOrNull(rosterIndex) ?: track.artist.trim()
+    LaunchedEffect(roster.size) { if (rosterIndex >= roster.size) rosterIndex = 0 }
+    var ensured by remember(artistName) { mutableStateOf<ArtistInfo?>(null) }
+    LaunchedEffect(track.id, artistName) {
+        ensured = null
+        ensured = onAppear(artistName)
+    }
+    val stored by produceState<ArtistInfo?>(null, artistName, revision) { value = loadArtist(artistName) }
+    val artist = ensured ?: stored
     val album by produceState<AlbumInfo?>(null, track.album, track.artist, revision) { value = loadAlbum(track.album, track.artist) }
     var editArtist by rememberSaveable { mutableStateOf(false) }
     var editAlbum by rememberSaveable { mutableStateOf(false) }
@@ -124,17 +139,41 @@ internal fun ArtistAlbumPage(
         Spacer(Modifier.height(18.dp))
         Overline("歌手", color = ink.copy(alpha = .6f), modifier = Modifier.rise(progress, 0))
         Spacer(Modifier.height(16.dp))
-        Box(
-            Modifier
-                .rise(progress, 1, scaleFrom = .82f)
-                .size(168.dp)
-                .shadow(28.dp, CircleShape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = .08f))
-                .clickable { onArtistHome?.invoke() ?: run { editArtist = true } },
-        ) {
-            PathImage(artist?.imagePath, Modifier.fillMaxSize(), maxEdge = 640, contentDescription = "$artistName 头像") {
-                StyledIcon(Icons.Rounded.Person, null, Modifier.size(72.dp), tint = ink.copy(alpha = .5f))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            if (roster.size > 1) {
+                OlbyineIconButton(
+                    Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                    "上一位作曲人",
+                    { rosterIndex = (rosterIndex - 1 + roster.size) % roster.size },
+                    size = 40.dp,
+                    iconSize = 26.dp,
+                    tint = ink.copy(alpha = .7f),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Box(
+                Modifier
+                    .rise(progress, 1, scaleFrom = .82f)
+                    .size(168.dp)
+                    .shadow(28.dp, CircleShape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = .08f))
+                    .clickable { if (onArtistHome != null) onArtistHome(artistName) else editArtist = true },
+            ) {
+                PathImage(artist?.imagePath, Modifier.fillMaxSize(), maxEdge = 640, contentDescription = "$artistName 头像") {
+                    StyledIcon(Icons.Rounded.Person, null, Modifier.size(72.dp), tint = ink.copy(alpha = .5f))
+                }
+            }
+            if (roster.size > 1) {
+                Spacer(Modifier.width(4.dp))
+                OlbyineIconButton(
+                    Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    "下一位作曲人",
+                    { rosterIndex = (rosterIndex + 1) % roster.size },
+                    size = 40.dp,
+                    iconSize = 26.dp,
+                    tint = ink.copy(alpha = .7f),
+                )
             }
         }
         Spacer(Modifier.height(18.dp))
@@ -148,6 +187,14 @@ internal fun ArtistAlbumPage(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        if (roster.size > 1) {
+            Text(
+                "${rosterIndex + 1} / ${roster.size}",
+                Modifier.padding(top = 4.dp).rise(progress, 2),
+                style = MaterialTheme.typography.labelSmall,
+                color = ink.copy(alpha = .5f),
+            )
+        }
         (track.composerCredit?.takeIf(String::isNotBlank) ?: track.composer)?.trim()?.takeIf(String::isNotEmpty)?.let { composer ->
             Text(
                 "作曲：$composer",
@@ -177,7 +224,7 @@ internal fun ArtistAlbumPage(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (onArtistHome != null) SmallChip("歌手主页", Icons.Rounded.Person, onClick = onArtistHome)
+                if (onArtistHome != null) SmallChip("歌手主页", Icons.Rounded.Person, onClick = { onArtistHome(artistName) })
                 if (onLocalComposer != null && localComposerCount > 0) {
                     SmallChip("作曲人的本地歌曲 · $localComposerCount", Icons.Rounded.EditNote, onClick = onLocalComposer)
                 }

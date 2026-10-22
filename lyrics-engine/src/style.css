@@ -16,6 +16,7 @@ body {
 
 #lyrics .amll-lyric-player {
   --amll-lp-color: var(--olbyine-foreground, #ffffff);
+  --amll-lp-hover-bg-color: transparent;
   --amll-lp-font-size: var(--olbyine-font-size, 32px);
   color: var(--olbyine-foreground, #ffffff);
   font-family: var(--olbyine-font-family, system-ui, "Noto Sans CJK SC", "Noto Sans", sans-serif);
@@ -46,5 +47,6 @@ body {
 }
 
 /* Translation / romanization size: its own setting, relative to the main line. */
+#lyrics .amll-lyric-player { line-height: var(--olbyine-line-gap, 1.2); }
 #lyrics [class*="lyricSubLine"] { font-size: max(calc(var(--olbyine-sub-scale, .5) * 1em), 10px); }
 #lyrics [class*="lyricMainLine"] [class*="romanWord"] { font-size: calc(var(--olbyine-sub-scale, .5) * 1em); }

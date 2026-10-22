@@ -12,17 +12,32 @@ class ArtworkPaletteRepository {
 
     suspend fun colorsFor(seed: String?, coverPath: String?): List<Int> = withContext(Dispatchers.IO) {
         val safeSeed = seed.orEmpty().ifBlank { "olbyine" }
-        val key = "$safeSeed|${coverPath.orEmpty()}"
+        val source = coverPath.orEmpty()
+        val key = "$safeSeed|$source"
         cache.get(key)?.let { return@withContext it }
 
-        val colors = coverPath
-            ?.let(::decodeSampled)
+        val colors = source
+            .takeIf { it.isNotBlank() }
+            ?.let { if (it.startsWith("http", true)) decodeRemote(it) else decodeSampled(it) }
             ?.let(::sampleGrid)
             ?.takeIf { it.size == COLOR_COUNT }
             ?: fallbackColors(safeSeed)
         cache.put(key, colors)
         colors
     }
+
+    private fun decodeRemote(url: String): Bitmap? = runCatching {
+        val request = okhttp3.Request.Builder().url(url).build()
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val bytes = response.body?.bytes() ?: return@use null
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }
+    }.getOrNull()
 
     private fun decodeSampled(path: String): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

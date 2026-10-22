@@ -15,4 +15,9 @@
 -dontwarn org.openjsse.**
 
 -keepattributes SourceFile,LineNumberTable
+
+-keep class com.netease.nimlib.** { *; }
+-keep class com.netease.nim.** { *; }
+-dontwarn com.netease.nimlib.**
+-dontwarn com.netease.nim.**
 -renamesourcefileattribute SourceFile

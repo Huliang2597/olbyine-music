@@ -467,6 +467,9 @@ private fun PlayerSettingsPage(state: MainUiState, viewModel: MainViewModel) {
         GroupDivider()
         SettingSwitch(Icons.Rounded.Headphones, "显示本地/监听切换", "播放页底部的切换；播放网易云 / SoundCloud 歌曲时会自动隐藏",
             settings.showSourceSwitch, viewModel::setShowSourceSwitch)
+        GroupDivider()
+        SettingSwitch(Icons.Rounded.PictureInPicture, "悬浮封面按钮", "打开听歌排行、收藏专辑、播客、歌单管理等子页面时，把底部播放器收成可拖动的封面按钮",
+            settings.floatingCoverButton, viewModel::setFloatingCoverButton)
     }
     SettingsGroup("特效（来自 React Bits）") {
         com.olbyine.music.data.PlayerFx.labels.forEachIndexed { index, (bit, title, description) ->
@@ -493,6 +496,7 @@ private fun LyricsSettingsPage(state: MainUiState, viewModel: MainViewModel, onI
         SliderRow("歌词字重", { it.roundToInt().toString() }, settings.lyricFontWeight.toFloat(), 100f..900f, steps = 7) {
             viewModel.setLyricFontWeight(it.roundToInt())
         }
+        SliderRow("歌词行距", { "%.1f×".format(it) }, settings.lyricLineGap, 1f..2.4f, steps = 13, onValue = viewModel::setLyricLineGap)
         SliderRow("未播放行透明度", { "${(it * 100).roundToInt()}%" }, settings.lyricInactiveOpacity, 0.16f..0.72f, onValue = viewModel::setLyricOpacity)
         OffsetRow(settings.lyricOffsetMs, viewModel::setLyricOffset)
         AlignRow(settings.lyricAlignPosition, viewModel::setLyricAlignPosition)
@@ -1177,6 +1181,7 @@ private fun NavRow(
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = if (compact) 11.dp else 13.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Start,
     ) {
         IconTile(icon)
         Spacer(Modifier.width(if (compact) 14.dp else 16.dp))
@@ -1580,26 +1585,39 @@ private fun tileColorOf(icon: ImageVector): Color = SystemTileColors[(icon.name.
 private fun IconTile(icon: ImageVector) {
     val colors = MaterialTheme.colorScheme
     val hue = tileColorOf(icon)
+    val ios = LocalStyleSpec.current.style == UiStyle.IOS
+    val tileSlot = Modifier.size(34.dp)
     when (LocalStyleSpec.current.iconTile) {
-        IconTileKind.FILLED -> Box(
-            Modifier.size(29.dp).clip(RoundedCornerShape(7.dp))
-                .background(if (colors.background.luminance() < .5f) Color(0xFF636366) else Color(0xFF8E8E93)),
-            contentAlignment = Alignment.Center,
-        ) { StyledIcon(icon, null, Modifier.size(18.dp), tint = Color.White) }
+        IconTileKind.FILLED -> Box(tileSlot) {
+            Box(
+                Modifier.align(Alignment.Center)
+                    .size(if (ios) 28.dp else 29.dp)
+                    .clip(RoundedCornerShape(if (ios) 8.dp else 7.dp))
+                    .background(if (colors.background.luminance() < .5f) Color(0xFF636366) else Color(0xFF8E8E93)),
+                contentAlignment = Alignment.Center,
+            ) {
+                StyledIcon(
+                    icon,
+                    null,
+                    Modifier.align(Alignment.Center).size(if (ios) 17.dp else 18.dp),
+                    tint = Color.White,
+                )
+            }
+        }
         IconTileKind.TINTED -> Box(
-            Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(colors.primary.copy(alpha = .14f)),
+            tileSlot.clip(RoundedCornerShape(if (ios) 10.dp else 11.dp)).background(colors.primary.copy(alpha = .14f)),
             contentAlignment = Alignment.Center,
-        ) { Icon(icon, null, Modifier.size(19.dp), tint = colors.primary) }
+        ) { Icon(icon, null, Modifier.align(Alignment.Center).size(19.dp), tint = colors.primary) }
         IconTileKind.CIRCLE -> Box(
-            Modifier.size(34.dp).clip(RoundedCornerShape(11.dp))
+            tileSlot.clip(RoundedCornerShape(if (ios) 10.dp else 11.dp))
                 .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(hue, lerpColor(hue, Color.Black, .12f)))),
             contentAlignment = Alignment.Center,
-        ) { StyledIcon(icon, null, Modifier.size(19.dp), tint = Color.White) }
-        IconTileKind.PLAIN -> Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+        ) { StyledIcon(icon, null, Modifier.align(Alignment.Center).size(if (ios) 18.dp else 19.dp), tint = Color.White) }
+        IconTileKind.PLAIN -> Box(tileSlot, contentAlignment = Alignment.Center) {
             StyledIcon(
                 icon,
                 null,
-                Modifier.size(24.dp),
+                Modifier.align(Alignment.Center).size(24.dp),
                 tint = if (LocalStyleSpec.current.style == UiStyle.MATERIAL) colors.onSurfaceVariant else hue,
             )
         }

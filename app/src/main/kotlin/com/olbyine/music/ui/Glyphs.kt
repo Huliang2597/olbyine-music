@@ -1,6 +1,11 @@
 package com.olbyine.music.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -100,5 +105,40 @@ internal fun styledVector(icon: ImageVector): ImageVector {
 
 @Composable
 internal fun StyledIcon(icon: ImageVector, contentDescription: String?, modifier: Modifier = Modifier, tint: Color = androidx.compose.material3.LocalContentColor.current) {
-    Icon(styledVector(icon), contentDescription, modifier, tint = tint)
+    val vector = styledVector(icon)
+    Icon(vector, contentDescription, modifier, tint = tint)
+}
+
+@Composable
+internal fun StyledCenteredIcon(
+    icon: ImageVector,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    tint: Color = androidx.compose.material3.LocalContentColor.current,
+    opticalCenterInset: androidx.compose.ui.unit.Dp? = null,
+) {
+    val style = LocalStyleSpec.current.style
+    val vector = styledVector(icon)
+    if (style == UiStyle.MATERIAL) {
+        Icon(vector, contentDescription, modifier, tint = tint)
+        return
+    }
+    Box(modifier, contentAlignment = androidx.compose.ui.Alignment.Center) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val side = minOf(maxWidth, maxHeight)
+            val nudgeRatio = if (opticalCenterInset != null) 0f else if (style == UiStyle.IOS) 0.045f else 0f
+            Icon(
+                vector,
+                contentDescription,
+                Modifier
+                    .size(side, side)
+                    .align(androidx.compose.ui.Alignment.Center)
+                    .graphicsLayer {
+                        translationX = if (opticalCenterInset != null) 0f else -side.toPx() * nudgeRatio
+                        translationY = 0f
+                    },
+                tint = tint,
+            )
+        }
+    }
 }

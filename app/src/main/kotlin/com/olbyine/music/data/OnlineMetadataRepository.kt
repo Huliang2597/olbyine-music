@@ -220,6 +220,43 @@ class OnlineMetadataRepository(private val context: Context, private val apple: 
         getBytes(sized(url, candidate.source))
     }
 
+    suspend fun ensureArtist(name: String): ArtistInfo? = withContext(Dispatchers.IO) {
+        val key = name.trim()
+        if (key.isBlank()) return@withContext null
+        val existing = artist(key)
+        if (existing != null && (existing.bio.isNotBlank() || existing.imagePath != null)) return@withContext existing
+        var candidates = safe { search(key, "", "") }.orEmpty()
+        if (candidates.none { it.artist.contains(key, ignoreCase = true) }) {
+            candidates = safe { search(key, key, "") }.orEmpty()
+        }
+        val best = candidates.firstOrNull { it.artist.contains(key, ignoreCase = true) }
+            ?: candidates.firstOrNull { it.source == MetadataSource.NETEASE }
+            ?: candidates.firstOrNull()
+        if (best != null) {
+            val (imageUrl, bio) = when (best.source) {
+                MetadataSource.NETEASE -> best.artistId?.let { id ->
+                    val artist = safeObj { json(getText("$NETEASE/api/v1/artist/$id", NETEASE_HEADERS)).optJSONObject("artist") }
+                    (artist?.optString("picUrl")?.takeIf(String::isNotBlank)?.https() to artist?.optString("briefDesc").orEmpty())
+                } ?: (null to "")
+                MetadataSource.QQ -> best.artistImageUrl to ""
+                MetadataSource.APPLE -> appleArtistDetails(best)
+                MetadataSource.LOCAL -> null to ""
+            }
+            val imagePath = imageUrl?.let { url -> safeObj { saveImage("artist", key, getBytes(sized(url, best.source))) } }
+            if (imagePath != null || bio.isNotBlank()) {
+                saveArtist(
+                    ArtistInfo(
+                        name = key,
+                        imagePath = imagePath ?: existing?.imagePath,
+                        bio = bio.ifBlank { existing?.bio.orEmpty() },
+                        source = best.source,
+                    ),
+                )
+            }
+        }
+        artist(key)
+    }
+
     suspend fun applyDetails(candidate: MetadataCandidate, localArtist: String, localAlbum: String) = withContext(Dispatchers.IO) {
         val artistKey = localArtist.ifBlank { candidate.artist }
         val albumKey = localAlbum.ifBlank { candidate.album }

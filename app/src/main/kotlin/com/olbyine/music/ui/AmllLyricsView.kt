@@ -50,6 +50,7 @@ internal fun AmllLyricsView(
     rawTtml: String?,
     playback: PlaybackState,
     fontSize: Float,
+    lineGap: Float = 1.2f,
     fontWeight: Int,
     fontPath: String?,
     inactiveOpacity: Float,
@@ -79,7 +80,7 @@ internal fun AmllLyricsView(
     val foreground = MaterialTheme.colorScheme.onBackground
     val fontScale = LocalDensity.current.fontScale
     val reduceMotion = LocalReduceMotion.current
-    val styleJson = remember(fontSize, fontScale, fontWeight, fontPath, inactiveOpacity, foreground, reduceMotion, lineBlur, showTranslation, showRoman, subScale, doubleTapSeek, alignPosition) {
+    val styleJson = remember(fontSize, fontScale, fontWeight, fontPath, inactiveOpacity, foreground, reduceMotion, lineBlur, showTranslation, showRoman, subScale, doubleTapSeek, alignPosition, lineGap) {
         JSONObject()
             .put("alignPosition", alignPosition.coerceIn(.15f, .85f).toDouble())
             .put("reduceMotion", reduceMotion)
@@ -87,6 +88,7 @@ internal fun AmllLyricsView(
             .put("showTranslation", showTranslation)
             .put("showRoman", showRoman)
             .put("subScale", subScale.coerceIn(.3f, 1f).toDouble())
+            .put("lineGap", lineGap.coerceIn(1f, 2.4f).toDouble())
             .put("tapSeek", if (doubleTapSeek) "double" else "single")
             .put("fontSize", (fontSize * fontScale).toDouble())
             .put("fontWeight", fontWeight.coerceIn(100, 900))

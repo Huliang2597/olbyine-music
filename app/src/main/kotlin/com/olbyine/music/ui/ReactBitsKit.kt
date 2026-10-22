@@ -2,6 +2,7 @@
 
 package com.olbyine.music.ui
 
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
@@ -276,11 +277,14 @@ internal fun HeartWithMenu(
     minSize: Dp = 44.dp,
     showQueueActions: Boolean = true,
     onOpenArtist: (() -> Unit)? = null,
+    artistChoices: (() -> List<Pair<Long, String>>)? = null,
+    onOpenArtistId: ((Long?, String) -> Unit)? = null,
     onOpenAlbum: (() -> Unit)? = null,
     onDownload: (() -> Unit)? = null,
 ) {
     val actions = LocalTrackActions.current
     var open by remember { mutableStateOf(false) }
+    var choosingArtist by remember { mutableStateOf<List<Pair<Long, String>>?>(null) }
     Box(modifier) {
         PulseHeart(
             liked, onToggle, Modifier, count, likedColor, idleColor, pill, textColor, iconSize, minSize,
@@ -298,8 +302,85 @@ internal fun HeartWithMenu(
                 GlassMenuItem("下一首播放", { open = false; track()?.let(actions.playNext) }, icon = Icons.AutoMirrored.Rounded.PlaylistPlay)
                 GlassMenuItem("加入播放列表", { open = false; track()?.let(actions.enqueue) }, icon = Icons.AutoMirrored.Rounded.QueueMusic)
                 if (onDownload != null) GlassMenuItem("下载", { open = false; onDownload() }, icon = Icons.Rounded.FileDownload)
-                if (onOpenArtist != null) GlassMenuItem("打开歌手页", { open = false; onOpenArtist() }, icon = Icons.Rounded.Mic)
+                if (onOpenArtist != null) GlassMenuItem("打开歌手页", {
+                    open = false
+                    val choices = artistChoices?.invoke().orEmpty().filter { it.first > 0L && it.second.isNotBlank() }
+                    if (choices.size > 1 && onOpenArtistId != null) choosingArtist = choices else onOpenArtist()
+                }, icon = Icons.Rounded.Mic)
                 if (onOpenAlbum != null) GlassMenuItem("打开专辑页", { open = false; onOpenAlbum() }, icon = Icons.Rounded.Album)
+            }
+        }
+        choosingArtist?.let { choices ->
+            OlbyineDialog(
+                onDismissRequest = { choosingArtist = null },
+                title = "选择作曲人",
+                confirmButton = {},
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { choosingArtist = null }) {
+                        androidx.compose.material3.Text("取消")
+                    }
+                },
+            ) {
+                Column(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                    choices.forEachIndexed { index, (id, name) ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                                .clickable {
+                                    choosingArtist = null
+                                    onOpenArtistId?.invoke(id, name)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(38.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = .14f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    name.trim().take(1).ifBlank { "音" },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    name,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    "作曲人 · 点击进入主页",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .8f),
+                                )
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                null,
+                                Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .55f),
+                            )
+                        }
+                        if (index != choices.lastIndex) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 60.dp, top = 1.dp, bottom = 1.dp)
+                                    .height(androidx.compose.ui.unit.Dp.Hairline)
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)),
+                            )
+                        }
+                    }
+                }
             }
         }
     }

@@ -718,11 +718,22 @@ internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: St
                                 try {
                                     if (target != null) client.replyComment(songId, target.id, text) else client.postComment(songId, text)
                                     haptics.confirm(HapticArea.MENUS)
+                                    val posted = System.currentTimeMillis()
+                                    val me = client.account.value
                                     val mine = NeteaseComment(
-                                        id = System.currentTimeMillis(), user = "我", avatarUrl = null, content = text, time = System.currentTimeMillis(),
-                                        likedCount = 0, replyTo = target?.let { "@${it.user}：${it.content}" },
+                                        id = posted,
+                                        user = me?.nickname?.takeIf(String::isNotBlank) ?: "我",
+                                        userId = me?.userId ?: 0L,
+                                        avatarUrl = me?.avatarUrl?.let { url -> if (url.contains("?")) url else "$url?param=100y100" },
+                                        content = text,
+                                        time = posted,
+                                        likedCount = 0,
+                                        replyTo = target?.let { "@${it.user}：${it.content}" },
                                     )
-                                    if (thread != null) replies += mine else latest.add(0, mine)
+                                    if (thread != null) replies += mine else {
+                                        latest.add(0, mine)
+                                        total += 1
+                                    }
                                     draft = ""
                                     replyTo = null
                                 } catch (failure: Throwable) {
@@ -760,21 +771,14 @@ private fun CommentRow(
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    comment.user,
-                    Modifier.weight(1f, fill = false).clip(RoundedCornerShape(6.dp)).clickable { onUser(comment) },
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.weight(1f))
-                if (comment.likedCount > 0) {
-                    StyledIcon(Icons.Rounded.ThumbUp, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(3.dp))
-                    Text(playCountLabel(comment.likedCount.toLong()), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+            Text(
+                comment.user,
+                Modifier.clip(RoundedCornerShape(6.dp)).clickable { onUser(comment) },
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Text(comment.content, style = MaterialTheme.typography.bodyMedium)
             if (comment.replyTo != null) {
                 Text(
@@ -796,6 +800,14 @@ private fun CommentRow(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )
+                }
+                Spacer(Modifier.weight(1f))
+                if (comment.likedCount > 0) {
+                    Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        StyledIcon(Icons.Rounded.ThumbUp, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(3.dp))
+                        Text(playCountLabel(comment.likedCount.toLong()), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
