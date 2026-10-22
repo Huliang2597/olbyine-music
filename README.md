@@ -1,16 +1,25 @@
 # Olbyine
 
+[![最新版本](https://img.shields.io/github/v/release/Huliang2597/olbyine-music?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&sort=semver&color=5B47FF)](https://github.com/Huliang2597/olbyine-music/releases/latest)
+[![发布日期](https://img.shields.io/github/release-date/Huliang2597/olbyine-music?label=%E5%8F%91%E5%B8%83%E6%97%A5%E6%9C%9F)](https://github.com/Huliang2597/olbyine-music/releases)
+[![下载量](https://img.shields.io/github/downloads/Huliang2597/olbyine-music/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F)](https://github.com/Huliang2597/olbyine-music/releases)
+[![许可](https://img.shields.io/github/license/Huliang2597/olbyine-music?label=%E8%AE%B8%E5%8F%AF&color=2ea44f)](LICENSE)
+
 Olbyine 是一个 Android 本地与流媒体音乐播放器，使用 Kotlin、Jetpack Compose 和 AndroidX Media3 构建。
 
 Android 10+ · arm64-v8a / armeabi-v7a · AGPL-3.0
 
 ## 下载
 
-最新版本见 [Releases](https://github.com/Huliang2597/olbyine-music/releases)。
+到 [Releases](https://github.com/Huliang2597/olbyine-music/releases/latest) 下载最新安装包，版本号、体积、更新内容与校验值都以上面的发布页为准。
 
-- 安装包：`Olbyine-1.1-release.apk`
 - 包名：`com.olbyine.music`
 - 需要 Android 10（API 29）及以上
+- 安装包签名固定，后续版本可以直接覆盖安装
+
+## 更新
+
+每次发布都会在 [Releases](https://github.com/Huliang2597/olbyine-music/releases) 记录版本号、更新说明与安装包，应用内「设置 → 关于 → 检查更新」也会读取同一个发布页。本文件只描述功能与构建方式，不随版本改动。
 
 ## 功能
 
@@ -44,7 +53,7 @@ Android 10+ · arm64-v8a / armeabi-v7a · AGPL-3.0
 ### 歌词
 
 - 逐字歌词（内置 AMLL 歌词引擎），支持 TTML / LRC / QRC
-- 翻译、罗马音独立开关；可调字号、字重、时间偏移与高亮位置
+- 翻译、罗马音独立开关；可调字号、字重、时间偏移、行距与高亮位置
 - MV 歌词动画：跃动、倾斜、排版三种形态，横竖屏自动适配
 - 歌词外显：桌面悬浮歌词（可拖动、缩放、控制播放）、状态栏、锁屏、通知、桌面小组件、车载歌词
 - 在线歌词自动匹配，也可以手动导入本地歌词文件
@@ -57,12 +66,14 @@ Android 10+ · arm64-v8a / armeabi-v7a · AGPL-3.0
 - 输出模式可选标准 / 高解析
 - 播放队列、下一首播放、随机与循环、倍速播放
 - 动态封面、律动背景、玻璃质感播放控件
+- 一起听：与网易云客户端双向同步播放、暂停、切歌与队列，房间内可聊天
 
 ### 外观
 
 - 四种界面风格：iOS、ColorOS、澎湃 OS、原生 Android，每种风格有独立的图标集
 - 明暗主题、玻璃材质强度、自定义背景、应用图标
 - 手机与平板两套布局，平板侧边栏包含音乐库分类、洛雪音乐与各在线音源入口
+- 子页面悬浮封面按钮：进入榜单、收藏专辑、播客、歌单管理等页面时，播放器收成可拖动的封面，位置会记住
 
 ### 其他
 
@@ -79,7 +90,7 @@ Android 10+ · arm64-v8a / armeabi-v7a · AGPL-3.0
 ./gradlew :app:assembleRelease
 ```
 
-产物在 `app/build/outputs/apk/release/`。
+产物在 `app/build/outputs/apk/release/`。发布用的安装包由 GitHub Actions 在推送 `v*` 标签时打包，版本号取自 `app/build.gradle`。
 
 歌词引擎静态资源位于 `app/src/native/assets/amll/`。如需从源码重建，需要 Node.js 和 pnpm：
 
