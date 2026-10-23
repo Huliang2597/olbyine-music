@@ -220,11 +220,36 @@ class OnlineMetadataRepository(private val context: Context, private val apple: 
         getBytes(sized(url, candidate.source))
     }
 
+    private fun neteaseArtistImageAndBio(artistId: String): Pair<String?, String> {
+        val artist = safeObj { json(getText("$NETEASE/api/v1/artist/$artistId", NETEASE_HEADERS)).optJSONObject("artist") }
+        val imageUrl = artist?.optString("picUrl")?.takeIf(String::isNotBlank)?.https()
+        var bio = artist?.optString("briefDesc").orEmpty().takeIf { it != "null" }.orEmpty().trim()
+        if (bio.isBlank()) {
+            val intro = safeObj { json(getText("$NETEASE/api/artist/introduction?id=$artistId", NETEASE_HEADERS)) }
+            bio = intro?.optString("briefDesc").orEmpty().takeIf { it != "null" }.orEmpty().trim()
+            if (bio.isBlank()) {
+                bio = intro?.optJSONArray("introduction")?.let { rows ->
+                    (0 until rows.length()).mapNotNull { index ->
+                        val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                        val title = row.optString("ti").trim()
+                        val body = row.optString("txt").trim()
+                        when {
+                            body.isBlank() -> null
+                            title.isBlank() -> body
+                            else -> title + "\n" + body
+                        }
+                    }.joinToString("\n\n").trim()
+                }.orEmpty()
+            }
+        }
+        return imageUrl to bio
+    }
+
     suspend fun ensureArtist(name: String): ArtistInfo? = withContext(Dispatchers.IO) {
         val key = name.trim()
         if (key.isBlank()) return@withContext null
         val existing = artist(key)
-        if (existing != null && (existing.bio.isNotBlank() || existing.imagePath != null)) return@withContext existing
+        if (existing != null && existing.bio.isNotBlank()) return@withContext existing
         var candidates = safe { search(key, "", "") }.orEmpty()
         if (candidates.none { it.artist.contains(key, ignoreCase = true) }) {
             candidates = safe { search(key, key, "") }.orEmpty()
@@ -234,21 +259,25 @@ class OnlineMetadataRepository(private val context: Context, private val apple: 
             ?: candidates.firstOrNull()
         if (best != null) {
             val (imageUrl, bio) = when (best.source) {
-                MetadataSource.NETEASE -> best.artistId?.let { id ->
-                    val artist = safeObj { json(getText("$NETEASE/api/v1/artist/$id", NETEASE_HEADERS)).optJSONObject("artist") }
-                    (artist?.optString("picUrl")?.takeIf(String::isNotBlank)?.https() to artist?.optString("briefDesc").orEmpty())
-                } ?: (null to "")
+                MetadataSource.NETEASE -> best.artistId?.let { id -> neteaseArtistImageAndBio(id) } ?: (null to "")
                 MetadataSource.QQ -> best.artistImageUrl to ""
                 MetadataSource.APPLE -> appleArtistDetails(best)
                 MetadataSource.LOCAL -> null to ""
             }
+            var resolvedBio = bio
+            if (resolvedBio.isBlank() && best.source != MetadataSource.NETEASE) {
+                val neteaseId = candidates.firstOrNull { it.source == MetadataSource.NETEASE && it.artistId != null }?.artistId
+                    ?: safe { search(key, key, "") }.orEmpty()
+                        .firstOrNull { it.source == MetadataSource.NETEASE && it.artistId != null }?.artistId
+                if (neteaseId != null) resolvedBio = neteaseArtistImageAndBio(neteaseId).second
+            }
             val imagePath = imageUrl?.let { url -> safeObj { saveImage("artist", key, getBytes(sized(url, best.source))) } }
-            if (imagePath != null || bio.isNotBlank()) {
+            if (imagePath != null || resolvedBio.isNotBlank()) {
                 saveArtist(
                     ArtistInfo(
                         name = key,
                         imagePath = imagePath ?: existing?.imagePath,
-                        bio = bio.ifBlank { existing?.bio.orEmpty() },
+                        bio = resolvedBio.ifBlank { existing?.bio.orEmpty() },
                         source = best.source,
                     ),
                 )
@@ -261,12 +290,9 @@ class OnlineMetadataRepository(private val context: Context, private val apple: 
         val artistKey = localArtist.ifBlank { candidate.artist }
         val albumKey = localAlbum.ifBlank { candidate.album }
         val existingArtist = artist(artistKey)
-        if (existingArtist?.edited != true) {
+        if (existingArtist?.edited != true && existingArtist?.bio.isNullOrBlank()) {
             val (imageUrl, bio) = when (candidate.source) {
-                MetadataSource.NETEASE -> candidate.artistId?.let { id ->
-                    val artist = safeObj { json(getText("$NETEASE/api/v1/artist/$id", NETEASE_HEADERS)).optJSONObject("artist") }
-                    (artist?.optString("picUrl")?.takeIf(String::isNotBlank)?.https() to artist?.optString("briefDesc").orEmpty())
-                } ?: (null to "")
+                MetadataSource.NETEASE -> candidate.artistId?.let { id -> neteaseArtistImageAndBio(id) } ?: (null to "")
                 MetadataSource.QQ -> candidate.artistImageUrl to ""
                 MetadataSource.APPLE -> appleArtistDetails(candidate)
                 MetadataSource.LOCAL -> null to ""
