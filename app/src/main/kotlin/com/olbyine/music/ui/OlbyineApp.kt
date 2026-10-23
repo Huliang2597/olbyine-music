@@ -474,14 +474,18 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             returnSettled = false
             frozenDockInset = dockHeightPx
             if (exitToFloating) {
-                exitToFloating = false
                 collapse.snapTo(1f)
+                exitToFloating = false
             } else {
                 collapse.animateTo(
                     1f,
                     androidx.compose.animation.core.tween(340, easing = androidx.compose.animation.core.CubicBezierEasing(0.32f, 0f, 0.18f, 1f)),
                 )
             }
+        } else if (!floatActive) {
+            exitToFloating = false
+            collapse.snapTo(0f)
+            returnSettled = true
         } else if (skipFloatCollapse) {
             skipFloatCollapse = false
             collapse.snapTo(0f)
@@ -498,7 +502,9 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     }
     val collapseProxy: () -> Float = { collapse.value }
     val floatProgressProxy: () -> Float = {
-        if (exitToFloating && playerOpen) (1f - sheet.value).coerceIn(0f, 1f) else collapse.value
+        if (exitToFloating) {
+            if (playerOpen) 0f else 1f
+        } else collapse.value
     }
     val collapseSettled: () -> Boolean = { collapse.value < 0.02f }
     val miniArtBoundsProxy: (Rect) -> Unit = { bounds ->
