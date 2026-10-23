@@ -221,6 +221,29 @@ class OnlineMetadataRepository(private val context: Context, private val apple: 
         getBytes(sized(url, candidate.source))
     }
 
+    private fun neteaseArtistSearch(name: String): List<Pair<String, String>> {
+        val url = "$NETEASE/api/search/get/web".toHttpUrl().newBuilder()
+            .addQueryParameter("s", name)
+            .addQueryParameter("type", "100")
+            .addQueryParameter("limit", "8")
+            .build().toString()
+        val artists = safeObj { json(getText(url, NETEASE_HEADERS)).optJSONObject("result")?.optJSONArray("artists") } ?: return emptyList()
+        return artists.objects().mapNotNull { row ->
+            val id = row.optLong("id").takeIf { it > 0 }?.toString() ?: return@mapNotNull null
+            val artistName = row.optString("name").trim()
+            if (artistName.isBlank()) null else id to artistName
+        }
+    }
+
+    private fun resolveNeteaseArtistId(name: String): String? {
+        val key = name.trim()
+        if (key.isBlank()) return null
+        val found = neteaseArtistSearch(key)
+        val exact = found.firstOrNull { it.second.equals(key, ignoreCase = true) }
+        val loose = found.firstOrNull { it.second.contains(key, ignoreCase = true) || key.contains(it.second, ignoreCase = true) }
+        return (exact ?: loose)?.first
+    }
+
     private fun neteaseArtistImageAndBio(artistId: String): Pair<String?, String> {
         val artist = safeObj { json(getText("$NETEASE/api/v1/artist/$artistId", NETEASE_HEADERS)).optJSONObject("artist") }
         val imageUrl = artist?.optString("picUrl")?.takeIf(String::isNotBlank)?.https()
@@ -251,40 +274,53 @@ class OnlineMetadataRepository(private val context: Context, private val apple: 
         if (key.isBlank()) return@withContext null
         val existing = artist(key)
         if (existing != null && existing.bio.isNotBlank()) return@withContext existing
-        var candidates = safe { search(key, "", "") }.orEmpty()
-        if (candidates.none { it.artist.contains(key, ignoreCase = true) }) {
-            candidates = safe { search(key, key, "") }.orEmpty()
+        var imageUrl: String? = null
+        var bio = ""
+        var source: MetadataSource? = null
+        val neteaseId = resolveNeteaseArtistId(key)
+        if (neteaseId != null) {
+            val resolved = neteaseArtistImageAndBio(neteaseId)
+            imageUrl = resolved.first
+            bio = resolved.second
+            if (imageUrl != null || bio.isNotBlank()) source = MetadataSource.NETEASE
         }
-        val nameMatches = candidates.filter { it.artist.contains(key, ignoreCase = true) }
-        val best = nameMatches.firstOrNull { it.source == MetadataSource.NETEASE }
-            ?: nameMatches.firstOrNull()
-            ?: candidates.firstOrNull { it.source == MetadataSource.NETEASE }
-            ?: candidates.firstOrNull()
-        if (best != null) {
-            val (imageUrl, bio) = when (best.source) {
-                MetadataSource.NETEASE -> best.artistId?.let { id -> neteaseArtistImageAndBio(id) } ?: (null to "")
-                MetadataSource.QQ -> best.artistImageUrl to ""
-                MetadataSource.APPLE -> appleArtistDetails(best)
-                MetadataSource.LOCAL -> null to ""
+        if (source == null) {
+            var candidates = safe { search(key, "", "") }.orEmpty()
+            if (candidates.none { it.artist.contains(key, ignoreCase = true) }) {
+                candidates = safe { search(key, key, "") }.orEmpty()
             }
-            var resolvedBio = bio
-            if (resolvedBio.isBlank() && best.source != MetadataSource.NETEASE) {
-                val neteaseId = candidates.firstOrNull { it.source == MetadataSource.NETEASE && it.artistId != null }?.artistId
-                    ?: safe { search(key, key, "") }.orEmpty()
-                        .firstOrNull { it.source == MetadataSource.NETEASE && it.artistId != null }?.artistId
-                if (neteaseId != null) resolvedBio = neteaseArtistImageAndBio(neteaseId).second
+            val nameMatches = candidates.filter { it.artist.contains(key, ignoreCase = true) }
+            val best = nameMatches.firstOrNull { it.source == MetadataSource.NETEASE }
+                ?: nameMatches.firstOrNull()
+                ?: candidates.firstOrNull { it.source == MetadataSource.NETEASE }
+                ?: candidates.firstOrNull()
+            if (best != null) {
+                source = best.source
+                val details = when (best.source) {
+                    MetadataSource.NETEASE -> best.artistId?.let { id -> neteaseArtistImageAndBio(id) } ?: (null to "")
+                    MetadataSource.QQ -> best.artistImageUrl to ""
+                    MetadataSource.APPLE -> appleArtistDetails(best)
+                    MetadataSource.LOCAL -> null to ""
+                }
+                imageUrl = details.first
+                bio = details.second
+                if (bio.isBlank()) {
+                    val fallbackId = resolveNeteaseArtistId(key)
+                        ?: candidates.firstOrNull { it.source == MetadataSource.NETEASE && it.artistId != null }?.artistId
+                    if (fallbackId != null) bio = neteaseArtistImageAndBio(fallbackId).second
+                }
             }
-            val imagePath = imageUrl?.let { url -> safeObj { saveImage("artist", key, getBytes(sized(url, best.source))) } }
-            if (imagePath != null || resolvedBio.isNotBlank()) {
-                saveArtist(
-                    ArtistInfo(
-                        name = key,
-                        imagePath = imagePath ?: existing?.imagePath,
-                        bio = resolvedBio.ifBlank { existing?.bio.orEmpty() },
-                        source = best.source,
-                    ),
-                )
-            }
+        }
+        val imagePath = imageUrl?.let { url -> safeObj { saveImage("artist", key, getBytes(sized(url, source ?: MetadataSource.NETEASE))) } }
+        if (imagePath != null || bio.isNotBlank()) {
+            saveArtist(
+                ArtistInfo(
+                    name = key,
+                    imagePath = imagePath ?: existing?.imagePath,
+                    bio = bio.ifBlank { existing?.bio.orEmpty() },
+                    source = source ?: MetadataSource.NETEASE,
+                ),
+            )
         }
         artist(key)
     }

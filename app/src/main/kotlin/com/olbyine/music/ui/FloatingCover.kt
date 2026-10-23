@@ -44,6 +44,7 @@ internal fun FloatingCoverButton(
     playing: Boolean,
     miniBounds: Rect?,
     dockArtBounds: Rect?,
+    startBounds: Rect? = null,
     progress: () -> Float,
     source: BackdropSource,
     style: GlassStyle,
@@ -71,11 +72,11 @@ internal fun FloatingCoverButton(
         val rootH = constraints.maxHeight.toFloat().coerceAtLeast(1f)
         val spanX = (rootW - buttonPx - edge * 2f).coerceAtLeast(0f)
         val spanY = (rootH - buttonPx - bottomInsetPx - edge * 2f).coerceAtLeast(0f)
-        val anchor = dockArtBounds ?: miniBounds
-        val startW = miniBounds?.width?.takeIf { it > 1f } ?: (rootW - edge * 2f)
-        val startH = miniBounds?.height?.takeIf { it > 1f } ?: miniH
-        val startLeft = miniBounds?.left ?: (rootW - buttonPx - edge)
-        val startTop = miniBounds?.top ?: (rootH - bottomInsetPx - startH)
+        val origin = startBounds
+        val startW = origin?.width?.takeIf { it > 1f } ?: miniBounds?.width?.takeIf { it > 1f } ?: (rootW - edge * 2f)
+        val startH = origin?.height?.takeIf { it > 1f } ?: miniBounds?.height?.takeIf { it > 1f } ?: miniH
+        val startLeft = origin?.left ?: miniBounds?.left ?: (rootW - buttonPx - edge)
+        val startTop = origin?.top ?: miniBounds?.top ?: (rootH - bottomInsetPx - startH)
         val targetLeft = edge + (if (spanX > 0f) fx.coerceIn(0f, 1f) * spanX else 0f) + dragX
         val targetTop = edge + (if (spanY > 0f) fy.coerceIn(0f, 1f) * spanY else 0f) + dragY
         if (p > 0.004f) {

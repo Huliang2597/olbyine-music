@@ -497,6 +497,9 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         }
     }
     val collapseProxy: () -> Float = { collapse.value }
+    val floatProgressProxy: () -> Float = {
+        if (exitToFloating && playerOpen) (1f - sheet.value).coerceIn(0f, 1f) else collapse.value
+    }
     val collapseSettled: () -> Boolean = { collapse.value < 0.02f }
     val miniArtBoundsProxy: (Rect) -> Unit = { bounds ->
         if (sheet.value < 0.001f && !sheet.dragging && collapse.value < 0.02f) miniArtBounds = bounds
@@ -1387,7 +1390,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 playing = playerState.playback.isPlaying,
                 miniBounds = miniBounds,
                 dockArtBounds = miniArtBounds,
-                progress = collapseProxy,
+                startBounds = if (exitToFloating) floatCoverBoundsHolder[0] else null,
+                progress = floatProgressProxy,
                 source = dockSource,
                 style = floatingGlassStyle,
                 onBounds = { bounds -> floatCoverBoundsHolder[0] = bounds },
