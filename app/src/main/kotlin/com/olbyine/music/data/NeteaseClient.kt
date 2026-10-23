@@ -54,6 +54,7 @@ data class NeteaseComment(
     val time: Long,
     val likedCount: Int,
     val replyTo: String?,
+    val liked: Boolean = false,
 )
 
 data class NeteaseComments(val hot: List<NeteaseComment>, val latest: List<NeteaseComment>, val total: Int, val more: Boolean)
@@ -695,6 +696,19 @@ class NeteaseClient(context: Context) {
         require(result.optInt("code") == 200) { result.optString("message").ifBlank { "评论发送失败" } }
     }
 
+    suspend fun likeComment(songId: Long, commentId: Long, liked: Boolean) = withContext(Dispatchers.IO) {
+        require(cookie != null) { "请先登录网易云音乐" }
+        val result = eapi(
+            "/api/v1/comment/like",
+            JSONObject()
+                .put("threadId", "R_SO_4_$songId")
+                .put("commentId", commentId.toString())
+                .put("type", "0")
+                .put("t", if (liked) "1" else "0"),
+        )
+        require(result.optInt("code") == 200) { result.optString("message").ifBlank { "操作失败" } }
+    }
+
     suspend fun commentReplies(songId: Long, parentId: Long, cursor: Long = -1): Pair<List<NeteaseComment>, Long?> = withContext(Dispatchers.IO) {
         val data = api(
             "/api/resource/comment/floor/get",
@@ -871,6 +885,7 @@ class NeteaseClient(context: Context) {
             content = row.optString("content"),
             time = row.optLong("time"),
             likedCount = row.optInt("likedCount"),
+            liked = row.optBoolean("liked"),
             replyTo = replied?.let { "@${it.optJSONObject("user")?.optString("nickname").orEmpty()}：${it.optString("content")}" },
         )
     }

@@ -627,6 +627,22 @@ internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: St
         }
     }
     LaunchedEffect(songId) { loadMore() }
+    val likedOverrides = remember(songId) { androidx.compose.runtime.mutableStateMapOf<Long, Boolean>() }
+    val toggleLike: (NeteaseComment) -> Unit = { comment ->
+        if (!client.signedIn) {
+            error = "登录网易云后可以点赞"
+        } else {
+            val next = !(likedOverrides[comment.id] ?: comment.liked)
+            likedOverrides[comment.id] = next
+            scope.launch {
+                runCatching { client.likeComment(songId, comment.id, next) }
+                    .onFailure {
+                        likedOverrides[comment.id] = !next
+                        error = it.message ?: "操作失败"
+                    }
+            }
+        }
+    }
     val replies = remember(thread?.id) { mutableStateListOf<NeteaseComment>() }
     var replyCursor by remember(thread?.id) { mutableStateOf<Long?>(-1L) }
     var repliesLoading by remember(thread?.id) { mutableStateOf(false) }
@@ -662,11 +678,11 @@ internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: St
             }
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
                 if (parent != null) {
-                    item(key = "parent") { CommentRow(parent, onUser = onUser, onReply = { replyTo = it }, onReplies = null, modifier = itemMotion()) }
+                    item(key = "parent") { CommentRow(parent, onUser = onUser, onReply = { replyTo = it }, onReplies = null, modifier = itemMotion(), liked = likedOverrides[parent.id] ?: parent.liked, onLike = toggleLike) }
                     item(key = "parent-line") { Overline("全部回复", itemMotion().padding(start = 6.dp, top = 8.dp, bottom = 4.dp)) }
                     itemsIndexed(replies, key = { _, it -> "r${it.id}" }) { index, reply ->
                         if (index >= replies.size - 4) LaunchedEffect(replies.size) { loadReplies() }
-                        CommentRow(reply, onUser = onUser, onReply = { replyTo = it }, onReplies = null, modifier = itemMotion())
+                        CommentRow(reply, onUser = onUser, onReply = { replyTo = it }, onReplies = null, modifier = itemMotion(), liked = likedOverrides[reply.id] ?: reply.liked, onLike = toggleLike)
                     }
                     if (repliesLoading && replies.isEmpty()) skeletonRows(4, avatar = true)
                     else if (repliesLoading) item(key = "replies-state") { LoadingOrError(true, null, {}, itemMotion()) }
@@ -674,14 +690,14 @@ internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: St
                     if (hot.isNotEmpty()) {
                         item(key = "hot") { Overline("精彩评论", itemMotion().padding(start = 6.dp, top = 8.dp, bottom = 4.dp)) }
                         itemsIndexed(hot, key = { index, it -> "h$index:${it.id}" }) { _, comment ->
-                            CommentRow(comment, onUser = onUser, onReply = { c -> replyTo = c }, onReplies = { c -> thread = c }, modifier = itemMotion())
+                            CommentRow(comment, onUser = onUser, onReply = { c -> replyTo = c }, onReplies = { c -> thread = c }, modifier = itemMotion(), liked = likedOverrides[comment.id] ?: comment.liked, onLike = toggleLike)
                         }
                     }
                     if (latest.isNotEmpty()) {
                         item(key = "latest") { Overline("最新评论", itemMotion().padding(start = 6.dp, top = 14.dp, bottom = 4.dp)) }
                         itemsIndexed(latest, key = { _, it -> "l${it.id}" }) { index, comment ->
                             if (index >= latest.size - 5) LaunchedEffect(latest.size) { loadMore() }
-                            CommentRow(comment, onUser = onUser, onReply = { replyTo = it }, onReplies = { thread = it }, modifier = itemMotion())
+                            CommentRow(comment, onUser = onUser, onReply = { replyTo = it }, onReplies = { thread = it }, modifier = itemMotion(), liked = likedOverrides[comment.id] ?: comment.liked, onLike = toggleLike)
                         }
                     }
                     if (loading && hot.isEmpty() && latest.isEmpty()) skeletonRows(6, avatar = true)
@@ -769,6 +785,8 @@ private fun CommentRow(
     onReply: (NeteaseComment) -> Unit,
     onReplies: ((NeteaseComment) -> Unit)?,
     modifier: Modifier = Modifier,
+    liked: Boolean = comment.liked,
+    onLike: ((NeteaseComment) -> Unit)? = null,
 ) {
     Row(modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onReply(comment) }.padding(horizontal = 6.dp, vertical = 8.dp)) {
         UrlImage(
@@ -808,11 +826,27 @@ private fun CommentRow(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                if (comment.likedCount > 0) {
-                    Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        StyledIcon(Icons.Rounded.ThumbUp, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                val count = comment.likedCount + if (liked && !comment.liked) 1 else if (!liked && comment.liked) -1 else 0
+                Row(
+                    Modifier
+                        .clip(CircleShape)
+                        .then(if (onLike != null) Modifier.clickable { onLike(comment) } else Modifier)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    StyledIcon(
+                        Icons.Rounded.ThumbUp,
+                        "点赞",
+                        Modifier.size(13.dp),
+                        tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .8f),
+                    )
+                    if (count > 0) {
                         Spacer(Modifier.width(3.dp))
-                        Text(playCountLabel(comment.likedCount.toLong()), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            playCountLabel(count.toLong()),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

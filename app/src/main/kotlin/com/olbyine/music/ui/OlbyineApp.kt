@@ -501,7 +501,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val floatInsetNow by remember { androidx.compose.runtime.derivedStateOf { if (collapse.value <= 0.004f) dockHeightPx else frozenDockInset } }
     val floatProgressProxy: () -> Float = {
         if (exitToFloating) {
-            if (playerOpen) 0f else 1f
+            if (playerOpen || sheet.value > 0.008f) 0f else 1f
         } else collapse.value
     }
     val collapseSettled: () -> Boolean = { collapse.value < 0.02f }
@@ -680,6 +680,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                         onOpenPlayer = { viewModel.navigateTo(AppDestination.NOW_PLAYING) },
                         onToggle = togglePlay,
                         onNext = skipNext,
+                        onPrevious = skipPrevious,
                         onDragStart = { sheet.drag(sheet.value) },
                         onDrag = miniDrag,
                         onDragStop = miniDragStop,
@@ -1756,6 +1757,7 @@ private fun BottomDock(
     onOpenPlayer: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
+    onPrevious: () -> Unit,
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragStop: (Float) -> Unit,
@@ -1802,6 +1804,7 @@ private fun BottomDock(
                 onOpen = onOpenPlayer,
                 onToggle = onToggle,
                 onNext = onNext,
+                onPrevious = onPrevious,
                 onDragStart = onDragStart,
                 onDrag = onDrag,
                 onDragStop = onDragStop,
@@ -2180,6 +2183,7 @@ private fun MiniPlayer(
     onOpen: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
+    onPrevious: () -> Unit,
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragStop: (Float) -> Unit,
@@ -2196,14 +2200,18 @@ private fun MiniPlayer(
             .fillMaxWidth()
             .height(MiniHeight)
             .glass(source, style)
-            .pointerInput(onDragStart, onDrag, onDragStop, onDragCancel) {
+            .pointerInput(onDragStart, onDrag, onDragStop, onDragCancel, onNext, onPrevious) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val tracker = VelocityTracker()
                     tracker.addPosition(down.uptimeMillis, down.position)
+                    val slop = viewConfiguration.touchSlop
                     var previousY = down.position.y
+                    var previousX = down.position.x
                     var totalY = 0f
+                    var totalX = 0f
                     var dragStarted = false
+                    var sideways = false
                     var canceled = false
                     while (true) {
                         val event = awaitPointerEvent()
@@ -2222,22 +2230,39 @@ private fun MiniPlayer(
                             break
                         }
                         val deltaY = change.position.y - previousY
+                        val deltaX = change.position.x - previousX
                         previousY = change.position.y
+                        previousX = change.position.x
                         tracker.addPosition(change.uptimeMillis, change.position)
-                        if (!dragStarted) {
+                        if (!dragStarted && !sideways) {
                             totalY += deltaY
-                            if (totalY <= -viewConfiguration.touchSlop) {
+                            totalX += deltaX
+                            if (kotlin.math.abs(totalX) > slop && kotlin.math.abs(totalX) > kotlin.math.abs(totalY)) {
+                                sideways = true
+                                change.consume()
+                            } else if (totalY <= -slop) {
                                 dragStarted = true
                                 onDragStart()
-                                onDrag(totalY + viewConfiguration.touchSlop)
+                                onDrag(totalY + slop)
                                 change.consume()
                             }
-                        } else {
+                        } else if (dragStarted) {
+                            totalX += deltaX
                             onDrag(deltaY)
+                            change.consume()
+                        } else {
+                            totalX += deltaX
                             change.consume()
                         }
                     }
-                    if (dragStarted && !canceled) onDragStop(tracker.calculateVelocity().y)
+                    if (dragStarted && !canceled) {
+                        onDragStop(tracker.calculateVelocity().y)
+                    } else if (sideways && !canceled) {
+                        val velocityX = tracker.calculateVelocity().x
+                        val reach = 44.dp.toPx()
+                        if (totalX <= -reach || velocityX <= -700f) onNext()
+                        else if (totalX >= reach || velocityX >= 700f) onPrevious()
+                    }
                 }
             }
             .clickable(onClickLabel = "打开播放器", onClick = onOpen),
