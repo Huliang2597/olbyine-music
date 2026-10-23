@@ -496,6 +496,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         }
     }
     val collapseProxy: () -> Float = { collapse.value }
+    val miniHiddenByCollapse by remember { androidx.compose.runtime.derivedStateOf { state.settings.floatingCoverButton && (collapse.value > 0.06f || exitToFloating) } }
+    val floatInsetNow by remember { androidx.compose.runtime.derivedStateOf { if (collapse.value <= 0.004f) dockHeightPx else frozenDockInset } }
     val floatProgressProxy: () -> Float = {
         if (exitToFloating) {
             if (playerOpen) 0f else 1f
@@ -684,7 +686,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                         onSelect = viewModel::navigateTo,
                         tablet = appLayout.tablet,
                         startInset = appLayout.sidebarWidth,
-                        miniHidden = state.settings.floatingCoverButton && (collapseProxy() > 0.06f || exitToFloating),
+                        miniHidden = miniHiddenByCollapse,
                         instantMini = state.settings.floatingCoverButton && floatCoverMounted,
                         onMiniArtBounds = miniArtBoundsProxy,
                     )
@@ -992,6 +994,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                     runPlaybackAction { viewModel.playNeteaseSongs(songs, index, shuffle, key, startMs) }
                 },
                 LocalActiveCollection provides activeCollection,
+                LocalIsPlaying provides { playerState.playback.isPlaying },
             ) {
                 NeteaseOverlayHost(
                     stack = ncmStack,
@@ -1407,7 +1410,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                     exitToFloating = true
                     viewModel.navigateTo(AppDestination.NOW_PLAYING)
                 },
-                bottomInsetPx = if (collapse.value <= 0.004f) dockHeightPx else frozenDockInset,
+                bottomInsetPx = floatInsetNow,
             )
         }
 
@@ -2483,11 +2486,13 @@ private suspend fun animateCollapseSteps(
         anim.snapTo(target)
         return
     }
-    val frames = (durationMs / 16).coerceIn(8, 40)
-    for (step in 1..frames) {
-        val progress = easing.transform(step.toFloat() / frames)
+    val startNs = System.nanoTime()
+    var elapsed = 0L
+    while (elapsed < durationMs) {
+        val progress = easing.transform((elapsed.toFloat() / durationMs).coerceIn(0f, 1f))
         anim.snapTo(from + (target - from) * progress)
-        kotlinx.coroutines.delay(16L)
+        kotlinx.coroutines.delay(8L)
+        elapsed = (System.nanoTime() - startNs) / 1_000_000L
     }
     anim.snapTo(target)
 }
