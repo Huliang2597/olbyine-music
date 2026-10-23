@@ -108,6 +108,7 @@ class OnlineMetadataRepository(private val context: Context, private val apple: 
         if (artistKey.isNotBlank() && normalize(candidate.artist).let { it.contains(artistKey) || artistKey.contains(it) }) score += 2.0
         if (album.isNotBlank() && normalize(candidate.album) == normalize(album)) score += 1.0
         if (candidate.coverUrl != null) score += .2
+        if (candidate.source == MetadataSource.NETEASE) score += .15
         return score
     }
 
@@ -254,7 +255,9 @@ class OnlineMetadataRepository(private val context: Context, private val apple: 
         if (candidates.none { it.artist.contains(key, ignoreCase = true) }) {
             candidates = safe { search(key, key, "") }.orEmpty()
         }
-        val best = candidates.firstOrNull { it.artist.contains(key, ignoreCase = true) }
+        val nameMatches = candidates.filter { it.artist.contains(key, ignoreCase = true) }
+        val best = nameMatches.firstOrNull { it.source == MetadataSource.NETEASE }
+            ?: nameMatches.firstOrNull()
             ?: candidates.firstOrNull { it.source == MetadataSource.NETEASE }
             ?: candidates.firstOrNull()
         if (best != null) {

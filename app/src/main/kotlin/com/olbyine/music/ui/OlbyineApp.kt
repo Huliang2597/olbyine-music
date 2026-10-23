@@ -464,6 +464,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     var dockHeightPx by remember { mutableIntStateOf(0) }
     var returnSettled by remember { mutableStateOf(true) }
     var skipFloatCollapse by remember { mutableStateOf(false) }
+    var exitToFloating by remember { mutableStateOf(false) }
     val collapse = remember { androidx.compose.animation.core.Animatable(0f) }
     val floatActive = !ncmStack.isEmpty && state.settings.floatingCoverButton
     val floatShown = floatActive && !playerOpen && sheet.value < 0.01f
@@ -472,10 +473,15 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             floatCoverMounted = true
             returnSettled = false
             frozenDockInset = dockHeightPx
-            collapse.animateTo(
-                1f,
-                androidx.compose.animation.core.tween(340, easing = androidx.compose.animation.core.CubicBezierEasing(0.32f, 0f, 0.18f, 1f)),
-            )
+            if (exitToFloating) {
+                exitToFloating = false
+                collapse.snapTo(1f)
+            } else {
+                collapse.animateTo(
+                    1f,
+                    androidx.compose.animation.core.tween(340, easing = androidx.compose.animation.core.CubicBezierEasing(0.32f, 0f, 0.18f, 1f)),
+                )
+            }
         } else if (skipFloatCollapse) {
             skipFloatCollapse = false
             collapse.snapTo(0f)
@@ -501,7 +507,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     }
     val miniHidden = baseDestination == AppDestination.SETTINGS || playerState.currentTrack == null
     val collapsedBounds: () -> Rect = {
-        launchBounds ?: if (miniHidden && rootSize.height > 0) with(density) {
+        (if (exitToFloating) floatCoverBoundsHolder[0] else null) ?: launchBounds ?: if (miniHidden && rootSize.height > 0) with(density) {
             val width = rootSize.width.toFloat()
             val top = rootSize.height.toFloat() + 12.dp.toPx()
             Rect(12.dp.toPx(), top, width - 12.dp.toPx(), top + 66.dp.toPx())
@@ -668,7 +674,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                         onSelect = viewModel::navigateTo,
                         tablet = appLayout.tablet,
                         startInset = appLayout.sidebarWidth,
-                        miniHidden = state.settings.floatingCoverButton && collapseProxy() > 0.06f,
+                        miniHidden = state.settings.floatingCoverButton && (collapseProxy() > 0.06f || exitToFloating),
                         instantMini = state.settings.floatingCoverButton && floatCoverMounted,
                         onMiniArtBounds = miniArtBoundsProxy,
                     )
@@ -1387,6 +1393,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 onBounds = { bounds -> floatCoverBoundsHolder[0] = bounds },
                 onOpen = {
                     launchBounds = floatCoverBoundsHolder[0] ?: miniArtBounds
+                    exitToFloating = true
                     skipFloatCollapse = true
                     viewModel.navigateTo(AppDestination.NOW_PLAYING)
                 },
