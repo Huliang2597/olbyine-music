@@ -150,12 +150,14 @@ internal fun QueuePanel(
     val haptics = rememberHaptics()
     var dragOffset by remember { mutableStateOf(0f) }
     val handoff = remember { floatArrayOf(0f, 0f) }
-    val baseInk = androidx.compose.ui.graphics.Color(0xFF4CAF50).copy(alpha = 0.95f)
-    val queueShadow = remember {
+    val baseInk = remember(artworkColors) { queueInk(artworkColors) }
+    val queueShadow = remember(artworkColors) {
+        val dark = queueCoverIsLight(artworkColors)
         androidx.compose.ui.graphics.Shadow(
-            color = androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.7f),
-            offset = androidx.compose.ui.geometry.Offset(0f, 1.5f),
-            blurRadius = 6f,
+            color = if (dark) androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.85f)
+            else androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.9f),
+            offset = androidx.compose.ui.geometry.Offset(0f, 1f),
+            blurRadius = 8f,
         )
     }
     val settleJob = remember { arrayOfNulls<Job>(1) }
@@ -462,9 +464,9 @@ private fun QueueRow(
 ) {
     val queueShadow = remember {
         androidx.compose.ui.graphics.Shadow(
-            color = androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.7f),
-            offset = androidx.compose.ui.geometry.Offset(0f, 1.5f),
-            blurRadius = 6f,
+            color = androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.9f),
+            offset = androidx.compose.ui.geometry.Offset(0f, 1f),
+            blurRadius = 8f,
         )
     }
     val ink = MaterialTheme.colorScheme.onSurface
@@ -514,3 +516,19 @@ private fun QueueRow(
         }
     }
 }
+
+internal fun queueCoverIsLight(colors: List<Int>): Boolean {
+    if (colors.isEmpty()) return false
+    var sum = 0f
+    colors.forEach { argb ->
+        sum += (0.299f * android.graphics.Color.red(argb) + 0.587f * android.graphics.Color.green(argb) + 0.114f * android.graphics.Color.blue(argb)) / 255f
+    }
+    return sum / colors.size > 0.5f
+}
+
+internal fun queueInk(colors: List<Int>): androidx.compose.ui.graphics.Color =
+    if (queueCoverIsLight(colors)) {
+        androidx.compose.ui.graphics.Color(0xFF0F5132)
+    } else {
+        androidx.compose.ui.graphics.Color(0xFF9BE7A0)
+    }

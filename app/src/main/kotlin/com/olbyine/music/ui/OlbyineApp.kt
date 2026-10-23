@@ -477,10 +477,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 collapse.snapTo(1f)
                 exitToFloating = false
             } else {
-                collapse.animateTo(
-                    1f,
-                    androidx.compose.animation.core.tween(340, easing = androidx.compose.animation.core.CubicBezierEasing(0.32f, 0f, 0.18f, 1f)),
-                )
+                animateCollapseSteps(collapse, 1f, 340, CollapseEaseIn)
             }
         } else if (!floatActive) {
             exitToFloating = false
@@ -492,10 +489,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             returnSettled = true
         } else {
             if (collapse.value > 0.001f) {
-                collapse.animateTo(
-                    0f,
-                    androidx.compose.animation.core.tween(300, easing = androidx.compose.animation.core.CubicBezierEasing(0.36f, 0f, 0.16f, 1f)),
-                )
+                animateCollapseSteps(collapse, 0f, 300, CollapseEaseOut)
             }
             returnSettled = true
         }
@@ -2467,4 +2461,27 @@ private fun neteaseSongOf(track: Track): com.olbyine.music.data.NeteaseSong? {
         coverUrl = track.artworkUrl,
         unavailable = false,
     )
+}
+
+private val CollapseEaseIn = androidx.compose.animation.core.CubicBezierEasing(0.32f, 0f, 0.18f, 1f)
+private val CollapseEaseOut = androidx.compose.animation.core.CubicBezierEasing(0.36f, 0f, 0.16f, 1f)
+
+private suspend fun animateCollapseSteps(
+    anim: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>,
+    target: Float,
+    durationMs: Int,
+    easing: androidx.compose.animation.core.Easing,
+) {
+    val from = anim.value
+    if (kotlin.math.abs(from - target) < 0.002f) {
+        anim.snapTo(target)
+        return
+    }
+    val frames = (durationMs / 16).coerceIn(8, 40)
+    for (step in 1..frames) {
+        val progress = easing.transform(step.toFloat() / frames)
+        anim.snapTo(from + (target - from) * progress)
+        kotlinx.coroutines.delay(16L)
+    }
+    anim.snapTo(target)
 }
