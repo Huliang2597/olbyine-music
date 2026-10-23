@@ -97,6 +97,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.platform.LocalConfiguration
 import com.olbyine.music.data.HapticArea
 import com.olbyine.music.data.ScComment
 import com.olbyine.music.data.ScPlaylist
@@ -960,13 +961,14 @@ internal fun ScCommentsSheet(client: SoundCloudClient, trackId: Long, title: Str
     var error by remember { mutableStateOf<String?>(null) }
     var round by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+    val sheetHeight = (LocalConfiguration.current.screenHeightDp * .86f).dp
     GlassBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).imePadding()) {
+        Column(Modifier.fillMaxWidth().height(sheetHeight).imePadding()) {
             Column(Modifier.padding(horizontal = 22.dp)) {
                 Text("评论", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Box(Modifier.weight(1f, fill = false)) {
+            Box(Modifier.weight(1f)) {
                 Paged(key = "comments:$trackId:$round", bottomPadding = 0.dp, load = { next -> client.comments(trackId, next) }) { items, index ->
                     ScCommentRow(items[index])
                 }

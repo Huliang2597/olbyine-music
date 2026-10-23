@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalConfiguration
 import com.olbyine.music.data.HapticArea
 import com.olbyine.music.data.NeteaseArtist
 import com.olbyine.music.data.NeteaseClient
@@ -639,8 +640,9 @@ internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: St
         }
     }
     LaunchedEffect(thread?.id) { if (thread != null) loadReplies() }
+    val sheetHeight = (LocalConfiguration.current.screenHeightDp * .86f).dp
     GlassBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp).imePadding()) {
+        Column(Modifier.fillMaxWidth().height(sheetHeight).imePadding()) {
             val parent = thread
             Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (parent != null) {
@@ -654,7 +656,7 @@ internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: St
                     Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
                 if (parent != null) {
                     item(key = "parent") { CommentRow(parent, onUser = onUser, onReply = { replyTo = it }, onReplies = null, modifier = itemMotion()) }
                     item(key = "parent-line") { Overline("全部回复", itemMotion().padding(start = 6.dp, top = 8.dp, bottom = 4.dp)) }
