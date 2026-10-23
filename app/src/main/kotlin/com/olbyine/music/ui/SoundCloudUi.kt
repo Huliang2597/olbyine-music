@@ -397,6 +397,7 @@ private fun ScSearch(seed: String?, bottomPadding: Dp) {
 private fun <T> Paged(
     key: String,
     bottomPadding: Dp,
+    externalState: androidx.compose.foundation.lazy.LazyListState? = null,
     header: (@Composable () -> Unit)? = null,
     load: suspend (next: String?) -> com.olbyine.music.data.ScPage<T>,
     revealMatch: ((T) -> Boolean)? = null,
@@ -428,7 +429,7 @@ private fun <T> Paged(
         }
     }
     LaunchedEffect(key) { more() }
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val listState = externalState ?: androidx.compose.foundation.lazy.rememberLazyListState()
     val revealOffset = with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }
     var handledReveal by remember { mutableStateOf(false) }
     LaunchedEffect(items.size, revealMatch) {
@@ -962,14 +963,18 @@ internal fun ScCommentsSheet(client: SoundCloudClient, trackId: Long, title: Str
     var round by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     val sheetHeight = (LocalConfiguration.current.screenHeightDp * .86f).dp
-    GlassBottomSheet(onDismissRequest = onDismiss) {
+    val scListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scAtTop by remember(scListState) {
+        androidx.compose.runtime.derivedStateOf { scListState.firstVisibleItemIndex == 0 && scListState.firstVisibleItemScrollOffset <= 2 }
+    }
+    GlassBottomSheet(onDismissRequest = onDismiss, dismissBlocked = !scAtTop) {
         Column(Modifier.fillMaxWidth().height(sheetHeight).imePadding()) {
             Column(Modifier.padding(horizontal = 22.dp)) {
                 Text("评论", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box(Modifier.weight(1f)) {
-                Paged(key = "comments:$trackId:$round", bottomPadding = 0.dp, load = { next -> client.comments(trackId, next) }) { items, index ->
+                Paged(key = "comments:$trackId:$round", bottomPadding = 0.dp, externalState = scListState, load = { next -> client.comments(trackId, next) }) { items, index ->
                     ScCommentRow(items[index])
                 }
             }

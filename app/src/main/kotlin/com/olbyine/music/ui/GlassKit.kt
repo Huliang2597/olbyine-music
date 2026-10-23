@@ -363,15 +363,22 @@ internal fun GlassTextButton(
 @Composable
 internal fun GlassBottomSheet(
     onDismissRequest: () -> Unit,
-    sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    sheetState: SheetState? = null,
+    dismissBlocked: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val anchored = remember(sheetState) { mutableIntStateOf(0) }
-    LaunchedEffect(anchored.intValue, sheetState.isVisible) {
-        if (anchored.intValue > 0 && sheetState.isVisible) runCatching { sheetState.expand() }
+    val blocked = androidx.compose.runtime.rememberUpdatedState(dismissBlocked)
+    val ownState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { value -> value != androidx.compose.material3.SheetValue.Hidden || !blocked.value },
+    )
+    val state = sheetState ?: ownState
+    val anchored = remember(state) { mutableIntStateOf(0) }
+    LaunchedEffect(anchored.intValue, state.isVisible) {
+        if (anchored.intValue > 0 && state.isVisible) runCatching { state.expand() }
     }
     if (LocalStyleSpec.current.style == UiStyle.MATERIAL) {
-        ModalBottomSheet(onDismissRequest = onDismissRequest, sheetState = sheetState) {
+        ModalBottomSheet(onDismissRequest = onDismissRequest, sheetState = state) {
             Column(Modifier.onSizeChanged { anchored.intValue = it.height }) { content() }
         }
         return
@@ -381,7 +388,7 @@ internal fun GlassBottomSheet(
     val shown = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
-        sheetState = sheetState,
+        sheetState = state,
         shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
         containerColor = paneColor(blur),
         contentColor = colors.onSurface,
@@ -408,6 +415,7 @@ internal fun GlassBottomSheet(
         }
     }
 }
+
 @Composable
 internal fun GlassCheck(checked: Boolean, onCheckedChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
     if (LocalStyleSpec.current.style == UiStyle.MATERIAL) {

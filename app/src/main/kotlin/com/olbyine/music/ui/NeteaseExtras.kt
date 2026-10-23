@@ -91,7 +91,11 @@ internal fun NeteasePlaylistPicker(
     }
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
-    GlassBottomSheet(onDismissRequest = onDismiss) {
+    val pickState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val pickAtTop by remember(pickState) {
+        androidx.compose.runtime.derivedStateOf { pickState.firstVisibleItemIndex == 0 && pickState.firstVisibleItemScrollOffset <= 2 }
+    }
+    GlassBottomSheet(onDismissRequest = onDismiss, dismissBlocked = !pickAtTop) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
             Text(
                 "收藏到歌单",
@@ -121,7 +125,7 @@ internal fun NeteasePlaylistPicker(
             if (lists == null) {
                 LoadingOrError(state.loading, state.error, retry)
             } else {
-                LazyColumn(Modifier.fillMaxWidth()) {
+                LazyColumn(Modifier.fillMaxWidth(), state = pickState) {
                     item(key = "new") {
                         PickerRow(
                             leading = {
@@ -223,7 +227,11 @@ internal fun ScPlaylistPicker(
             busy = false
         }
     }
-    GlassBottomSheet(onDismissRequest = onDismiss) {
+    val pickState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val pickAtTop by remember(pickState) {
+        androidx.compose.runtime.derivedStateOf { pickState.firstVisibleItemIndex == 0 && pickState.firstVisibleItemScrollOffset <= 2 }
+    }
+    GlassBottomSheet(onDismissRequest = onDismiss, dismissBlocked = !pickAtTop) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
             Text("加入 SoundCloud 歌单", Modifier.padding(horizontal = 22.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.size(10.dp))
@@ -231,7 +239,7 @@ internal fun ScPlaylistPicker(
             if (lists == null) {
                 LoadingOrError(state.loading, state.error, retry)
             } else {
-                LazyColumn(Modifier.fillMaxWidth()) {
+                LazyColumn(Modifier.fillMaxWidth(), state = pickState) {
                     item(key = "new") {
                         PickerRow(
                             leading = {

@@ -661,7 +661,13 @@ internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: St
     }
     LaunchedEffect(thread?.id) { if (thread != null) loadReplies() }
     val sheetHeight = (LocalConfiguration.current.screenHeightDp * .86f).dp
-    GlassBottomSheet(onDismissRequest = onDismiss) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val atTop by remember(listState) {
+        androidx.compose.runtime.derivedStateOf {
+            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset <= 2
+        }
+    }
+    GlassBottomSheet(onDismissRequest = onDismiss, dismissBlocked = !atTop) {
         Column(Modifier.fillMaxWidth().height(sheetHeight).imePadding()) {
             val parent = thread
             Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -676,7 +682,7 @@ internal fun NeteaseCommentsSheet(client: NeteaseClient, songId: Long, title: St
                     Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
                 if (parent != null) {
                     item(key = "parent") { CommentRow(parent, onUser = onUser, onReply = { replyTo = it }, onReplies = null, modifier = itemMotion(), liked = likedOverrides[parent.id] ?: parent.liked, onLike = toggleLike) }
                     item(key = "parent-line") { Overline("全部回复", itemMotion().padding(start = 6.dp, top = 8.dp, bottom = 4.dp)) }

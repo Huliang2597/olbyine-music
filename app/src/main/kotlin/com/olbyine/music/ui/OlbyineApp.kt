@@ -2191,6 +2191,20 @@ private fun MiniPlayer(
     onArtBounds: (Rect) -> Unit = {},
 ) {
     val clock = rememberPlaybackClock(playback, intervalMs = 250L)
+    var swipeX by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val swipeScope = rememberCoroutineScope()
+    val animateSwipe: suspend (Float, Int, androidx.compose.animation.core.Easing) -> Unit = { target, durationMs, easing ->
+        val from = swipeX
+        val startNs = System.nanoTime()
+        var elapsed = 0L
+        while (elapsed < durationMs) {
+            val step = easing.transform((elapsed.toFloat() / durationMs).coerceIn(0f, 1f))
+            swipeX = from + (target - from) * step
+            kotlinx.coroutines.delay(8L)
+            elapsed = (System.nanoTime() - startNs) / 1_000_000L
+        }
+        swipeX = target
+    }
     val duration = playback.durationMs.takeIf { it > 0L } ?: track.durationMs
     val pendingSeek = playback.pendingSeekMs
     val progressColor = MaterialTheme.colorScheme.primary
@@ -2239,6 +2253,7 @@ private fun MiniPlayer(
                             totalX += deltaX
                             if (kotlin.math.abs(totalX) > slop && kotlin.math.abs(totalX) > kotlin.math.abs(totalY)) {
                                 sideways = true
+                                swipeX = totalX
                                 change.consume()
                             } else if (totalY <= -slop) {
                                 dragStarted = true
@@ -2252,16 +2267,28 @@ private fun MiniPlayer(
                             change.consume()
                         } else {
                             totalX += deltaX
+                            swipeX = totalX
                             change.consume()
                         }
                     }
                     if (dragStarted && !canceled) {
                         onDragStop(tracker.calculateVelocity().y)
-                    } else if (sideways && !canceled) {
+                    } else if (sideways) {
                         val velocityX = tracker.calculateVelocity().x
                         val reach = 44.dp.toPx()
-                        if (totalX <= -reach || velocityX <= -700f) onNext()
-                        else if (totalX >= reach || velocityX >= 700f) onPrevious()
+                        val goNext = totalX <= -reach || velocityX <= -700f
+                        val goPrevious = totalX >= reach || velocityX >= 700f
+                        if (!canceled && (goNext || goPrevious)) {
+                            val direction = if (goNext) -1f else 1f
+                            val width = size.width.toFloat().coerceAtLeast(1f)
+                            swipeScope.launch {
+                                animateSwipe(direction * width * .55f, 150, CollapseEaseOut)
+                                if (goNext) onNext() else onPrevious()
+                                animateSwipe(0f, 220, CollapseEaseIn)
+                            }
+                        } else {
+                            swipeScope.launch { animateSwipe(0f, 200, CollapseEaseIn) }
+                        }
                     }
                 }
             }
@@ -2291,6 +2318,11 @@ private fun MiniPlayer(
             interactive = true,
             onToggle = onToggle,
             onNext = onNext,
+            modifier = Modifier.graphicsLayer {
+                translationX = swipeX
+                val progress = (kotlin.math.abs(swipeX) / size.width.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                alpha = 1f - progress * .35f
+            },
         )
     }
 }
@@ -2306,9 +2338,10 @@ internal fun MiniPlayerRow(
     interactive: Boolean,
     onToggle: () -> Unit = {},
     onNext: () -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        Modifier.fillMaxSize().padding(start = MiniArtInset, end = 4.dp),
+        modifier.fillMaxSize().padding(start = MiniArtInset, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val direction = rememberSkipDirection(playback.currentIndex, playback.mediaItemCount)

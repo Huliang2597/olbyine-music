@@ -794,7 +794,11 @@ internal fun LxPlaylistPicker(
 ) {
     var naming by remember { mutableStateOf(false) }
     val haptics = rememberHaptics()
-    GlassBottomSheet(onDismissRequest = onDismiss) {
+    val lxState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val lxAtTop by remember(lxState) {
+        androidx.compose.runtime.derivedStateOf { lxState.firstVisibleItemIndex == 0 && lxState.firstVisibleItemScrollOffset <= 2 }
+    }
+    GlassBottomSheet(onDismissRequest = onDismiss, dismissBlocked = !lxAtTop) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
             Text(
                 "收藏到歌单",
@@ -803,7 +807,7 @@ internal fun LxPlaylistPicker(
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.size(10.dp))
-            LazyColumn(Modifier.fillMaxWidth()) {
+            LazyColumn(Modifier.fillMaxWidth(), state = lxState) {
                 item(key = "new") {
                     PickerRow(
                         leading = {
