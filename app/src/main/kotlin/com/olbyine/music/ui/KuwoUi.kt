@@ -1188,10 +1188,13 @@ private fun KuwoSongRow(
                 )
             }
         } else {
-            UrlImage(
-                song.coverUrl,
-                Modifier.size(46.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest),
-            )
+            Box(Modifier.size(46.dp)) {
+                UrlImage(
+                    song.coverUrl,
+                    Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                )
+                PlayingCoverScrim(current, LocalIsPlaying.current(), 10.dp, barSize = 15.dp)
+            }
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

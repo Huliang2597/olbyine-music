@@ -463,7 +463,6 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     var frozenDockInset by remember { mutableIntStateOf(0) }
     var dockHeightPx by remember { mutableIntStateOf(0) }
     var returnSettled by remember { mutableStateOf(true) }
-    var skipFloatCollapse by remember { mutableStateOf(false) }
     var exitToFloating by remember { mutableStateOf(false) }
     val collapse = remember { androidx.compose.animation.core.Animatable(0f) }
     val floatActive = !ncmStack.isEmpty && state.settings.floatingCoverButton
@@ -487,10 +486,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 collapse.snapTo(0f)
             }
             returnSettled = true
-        } else if (skipFloatCollapse) {
-            skipFloatCollapse = false
-            collapse.snapTo(0f)
-            returnSettled = true
+        } else if (exitToFloating) {
+            returnSettled = false
         } else {
             if (collapse.value > 0.001f) {
                 animateCollapseSteps(collapse, 0f, 300, CollapseEaseOut)
@@ -538,7 +535,6 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             if (floating != null) {
                 launchBounds = floating
                 exitToFloating = true
-                skipFloatCollapse = true
             } else if (launchBounds == null) {
                 val pressed = AppTouchOrigin.bounds?.takeIf {
                     android.os.SystemClock.uptimeMillis() - AppTouchOrigin.boundsAt < 3_000 && it.width > 4f && it.height > 4f
@@ -662,7 +658,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                     if (p > 0f) drawRect(Color.Black.copy(alpha = 0.38f * p))
                 },
         ) {
-            CompositionLocalProvider(LocalTrackActions provides trackActions, LocalNeteaseLike provides neteaseLike, LocalGlassPopupHost provides basePopups, LocalOpenWebDav provides { webDavOpen = true }, LocalAppLayout provides appLayout, LocalLyricFeed provides LyricFeed(playerLyrics, playerLyrics.trackId, miniClock, state.settings.lyricTranslation), LocalNeteaseComments provides openComments, LocalScComments provides openScComments, LocalSearchSoundCloud provides searchSoundCloud, LocalNeteaseProfile provides openNeteaseProfile, LocalNeteaseChat provides openChat, LocalNeteaseLinks provides openNeteaseLink, LocalOpenArtist provides openArtist, LocalOpenArtistWith provides openArtistWith, LocalPlayerLaunch provides { bounds -> if (sheet.value < 0.001f && !sheet.dragging) launchBounds = bounds }) {
+            CompositionLocalProvider(LocalTrackActions provides trackActions, LocalNeteaseLike provides neteaseLike, LocalGlassPopupHost provides basePopups, LocalOpenWebDav provides { webDavOpen = true }, LocalAppLayout provides appLayout, LocalLyricFeed provides LyricFeed(playerLyrics, playerLyrics.trackId, miniClock, state.settings.lyricTranslation), LocalNeteaseComments provides openComments, LocalScComments provides openScComments, LocalSearchSoundCloud provides searchSoundCloud, LocalNeteaseProfile provides openNeteaseProfile, LocalNeteaseChat provides openChat, LocalNeteaseLinks provides openNeteaseLink, LocalOpenArtist provides openArtist, LocalOpenArtistWith provides openArtistWith, LocalIsPlaying provides { playerState.playback.isPlaying }, LocalPlayerLaunch provides { bounds -> if (sheet.value < 0.001f && !sheet.dragging) launchBounds = bounds }) {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
                 containerColor = MaterialTheme.colorScheme.background,
@@ -1409,7 +1405,6 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 onOpen = {
                     launchBounds = floatCoverBoundsHolder[0] ?: miniArtBounds
                     exitToFloating = true
-                    skipFloatCollapse = true
                     viewModel.navigateTo(AppDestination.NOW_PLAYING)
                 },
                 bottomInsetPx = if (collapse.value <= 0.004f) dockHeightPx else frozenDockInset,

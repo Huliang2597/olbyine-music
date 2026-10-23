@@ -1009,7 +1009,6 @@ private class Credit(
 )
 
 private val Credits = listOf(
-    Credit("Olbyine Music", "Huliang2597/olbyine-music", "BydEaOlline", "AGPL-3.0", "本项目 Olbyine 的上游基础"),
     Credit("洛雪音乐 LX Music", "lyswhut/lx-music-desktop", "lyswhut", "Apache-2.0", "自定义源协议、榜单与推荐歌单接口的参考实现"),
     Credit("Apple Music-like Lyrics", "Steve-xmh/applemusic-like-lyrics", "Steve-xmh", "AGPL-3.0", "歌词引擎（内置修改版）与流动背景算法", R.drawable.avatar_steve_xmh),
     Credit("AMLL DroidMate", "Zeehan2005/AMLL-DroidMate", "Zeehan2005", "AGPL-3.0", "歌词引擎的 Android 接入与歌词搜索", R.drawable.avatar_zeehan2005),

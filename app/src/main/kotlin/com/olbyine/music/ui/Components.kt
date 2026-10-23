@@ -840,6 +840,22 @@ internal fun EmptyState(
     }
 }
 
+internal val LocalIsPlaying = staticCompositionLocalOf<() -> Boolean> { { false } }
+
+@Composable
+internal fun PlayingCoverScrim(current: Boolean, isPlaying: Boolean, corner: Dp, barSize: Dp = 16.dp) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = current,
+        enter = androidx.compose.animation.fadeIn(tween(OlbyineTokens.Motion.standardMs, easing = OlbyineTokens.Motion.easeOut)),
+        exit = androidx.compose.animation.fadeOut(tween(OlbyineTokens.Motion.quickMs)),
+    ) {
+        Box(
+            Modifier.fillMaxSize().clip(RoundedCornerShape(corner)).background(Color.Black.copy(alpha = .42f)),
+            contentAlignment = Alignment.Center,
+        ) { EqualizerBars(isPlaying, Color.White, Modifier.size(barSize)) }
+    }
+}
+
 @Composable
 internal fun EqualizerBars(playing: Boolean, color: Color, modifier: Modifier = Modifier.size(16.dp)) {
     val levels = remember { FloatArray(4) { EQ_REST[it] } }

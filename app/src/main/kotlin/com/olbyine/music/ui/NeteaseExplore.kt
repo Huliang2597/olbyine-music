@@ -528,7 +528,11 @@ internal fun NeteaseSongRow(song: NeteaseSong, current: Boolean, onClick: () -> 
             .padding(start = 8.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        UrlImage(song.coverUrl?.replace("600y600", "160y160"), Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
+        val playing = LocalIsPlaying.current()
+        Box(Modifier.size(48.dp)) {
+            UrlImage(song.coverUrl?.replace("600y600", "160y160"), Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
+            PlayingCoverScrim(current, playing, 10.dp)
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(song.title, style = MaterialTheme.typography.titleSmall, color = titleInk,
