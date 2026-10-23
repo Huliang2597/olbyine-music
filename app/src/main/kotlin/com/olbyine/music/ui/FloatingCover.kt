@@ -54,7 +54,6 @@ internal fun FloatingCoverButton(
 ) {
     val density = LocalDensity.current
     val miniH = with(density) { MiniHeight.toPx() }
-    val artInset = with(density) { MiniArtInset.toPx() }
     val edge = with(density) { 10.dp.toPx() }
     val buttonPx = with(density) { 46.dp.toPx() }
     val cornerEndPx = with(density) { OlbyineTokens.Corner.thumb.toPx() }
@@ -121,7 +120,8 @@ internal fun FloatingCoverButton(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
-                    Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true).padding(vertical = MiniArtInset)
+                    Modifier.fillMaxHeight().padding(vertical = MiniArtInset)
+                        .aspectRatio(1f, matchHeightConstraintsFirst = true)
                         .clip(RoundedCornerShape(OlbyineTokens.Corner.thumb)),
                 ) {
                     TrackArtwork(track, Modifier.fillMaxSize(), corner = OlbyineTokens.Corner.thumb)
