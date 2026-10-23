@@ -150,16 +150,12 @@ internal fun QueuePanel(
     val haptics = rememberHaptics()
     var dragOffset by remember { mutableStateOf(0f) }
     val handoff = remember { floatArrayOf(0f, 0f) }
-    val baseInk = remember(artworkColors) { queueInk(artworkColors) }
-    val queueShadow = remember(artworkColors) {
-        val dark = queueCoverIsLight(artworkColors)
-        androidx.compose.ui.graphics.Shadow(
-            color = if (dark) androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.85f)
-            else androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.9f),
-            offset = androidx.compose.ui.geometry.Offset(0f, 1f),
-            blurRadius = 8f,
-        )
-    }
+    val panelDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val inkIsLight = panelDark
+    val greenDark = androidx.compose.ui.graphics.Color(0xFF0A3D1C)
+    val greenLight = androidx.compose.ui.graphics.Color(0xFFC9F7CE)
+    val baseInk = remember(inkIsLight) { if (inkIsLight) greenLight else greenDark }
+    val queueShadow = remember(inkIsLight) { queueInkHaloFor(inkIsLight) }
     val settleJob = remember { arrayOfNulls<Job>(1) }
     LaunchedEffect(visible) {
         settleJob[0]?.cancel()
@@ -292,6 +288,7 @@ internal fun QueuePanel(
                             ) {
                                 QueueRow(
                                     queueInk = baseInk,
+                                    inkLight = inkIsLight,
                                     track = track,
                                     index = index,
                                     current = index == current,
@@ -461,14 +458,9 @@ private fun QueueRow(
     onLongPress: (() -> Unit)?,
     modifier: Modifier,
     queueInk: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    inkLight: Boolean = false,
 ) {
-    val queueShadow = remember {
-        androidx.compose.ui.graphics.Shadow(
-            color = androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.9f),
-            offset = androidx.compose.ui.geometry.Offset(0f, 1f),
-            blurRadius = 8f,
-        )
-    }
+    val queueShadow = remember(inkLight) { queueInkHaloFor(inkLight) }
     val ink = MaterialTheme.colorScheme.onSurface
     Row(
         modifier
@@ -517,6 +509,9 @@ private fun QueueRow(
     }
 }
 
+internal fun androidx.compose.ui.graphics.Color.luminance(): Float =
+    0.299f * red + 0.587f * green + 0.114f * blue
+
 internal fun queueCoverIsLight(colors: List<Int>): Boolean {
     if (colors.isEmpty()) return false
     var sum = 0f
@@ -528,7 +523,18 @@ internal fun queueCoverIsLight(colors: List<Int>): Boolean {
 
 internal fun queueInk(colors: List<Int>): androidx.compose.ui.graphics.Color =
     if (queueCoverIsLight(colors)) {
-        androidx.compose.ui.graphics.Color(0xFF0F5132)
+        androidx.compose.ui.graphics.Color(0xFF0A3D1C)
     } else {
-        androidx.compose.ui.graphics.Color(0xFF9BE7A0)
+        androidx.compose.ui.graphics.Color(0xFFB7F5BC)
     }
+
+internal fun queueInkHalo(colors: List<Int>): androidx.compose.ui.graphics.Shadow =
+    queueInkHaloFor(queueCoverIsLight(colors))
+
+internal fun queueInkHaloFor(light: Boolean): androidx.compose.ui.graphics.Shadow =
+    androidx.compose.ui.graphics.Shadow(
+        color = if (light) androidx.compose.ui.graphics.Color(1f, 1f, 1f, 0.75f)
+        else androidx.compose.ui.graphics.Color(0f, 0f, 0f, 0.85f),
+        offset = androidx.compose.ui.geometry.Offset(0f, 0.5f),
+        blurRadius = 7f,
+    )

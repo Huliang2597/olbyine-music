@@ -481,7 +481,11 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             }
         } else if (!floatActive) {
             exitToFloating = false
-            collapse.snapTo(0f)
+            if (collapse.value > 0.02f) {
+                animateCollapseSteps(collapse, 0f, 300, CollapseEaseOut)
+            } else {
+                collapse.snapTo(0f)
+            }
             returnSettled = true
         } else if (skipFloatCollapse) {
             skipFloatCollapse = false
