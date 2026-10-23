@@ -63,7 +63,6 @@ internal fun FloatingCoverButton(
     var fy by rememberSaveable { mutableFloatStateOf(0.74f) }
     var dragX by remember { mutableFloatStateOf(0f) }
     var dragY by remember { mutableFloatStateOf(0f) }
-    val active by remember { derivedStateOf { progress() > 0.004f } }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
     val rootWidth = constraints.maxWidth.toFloat().coerceAtLeast(1f)
@@ -78,9 +77,6 @@ internal fun FloatingCoverButton(
     val targetLeft = edge + (if (spanX > 0f) fx.coerceIn(0f, 1f) * spanX else 0f) + dragX
     val targetTop = edge + (if (spanY > 0f) fy.coerceIn(0f, 1f) * spanY else 0f) + dragY
 
-    if (!active) {
-        Box(modifier.fillMaxSize())
-    } else {
     val dynamics = remember(startW, startH, startLeft, startTop, buttonPx) {
         GlassDynamics(cornerRadius = { cornerStartPx + (cornerEndPx - cornerStartPx) * progress().coerceIn(0f, 1f) })
     }
@@ -90,6 +86,7 @@ internal fun FloatingCoverButton(
             .fillMaxSize()
             .layout { measurable, constraints ->
                 val p = progress().coerceIn(0f, 1f)
+                if (p <= 0.004f) return@layout layout(0, 0) {}
                 val w = (startW + (buttonPx - startW) * p).roundToInt().coerceAtLeast(1)
                 val h = (startH + (buttonPx - startH) * p).roundToInt().coerceAtLeast(1)
                 val left = (startLeft + (targetLeft - startLeft) * p).roundToInt()
@@ -124,7 +121,7 @@ internal fun FloatingCoverButton(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
-                    Modifier.fillMaxHeight().aspectRatio(1f).padding(vertical = MiniArtInset)
+                    Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true).padding(vertical = MiniArtInset)
                         .clip(RoundedCornerShape(OlbyineTokens.Corner.thumb)),
                 ) {
                     TrackArtwork(track, Modifier.fillMaxSize(), corner = OlbyineTokens.Corner.thumb)
@@ -153,6 +150,5 @@ internal fun FloatingCoverButton(
             }
         }
     }
-}
 }
 }

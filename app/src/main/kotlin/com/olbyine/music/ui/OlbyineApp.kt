@@ -479,6 +479,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 animateCollapseSteps(collapse, 1f, 340, CollapseEaseIn)
             }
         } else if (!floatActive) {
+            floatCoverMounted = false
             exitToFloating = false
             if (collapse.value > 0.02f) {
                 animateCollapseSteps(collapse, 0f, 300, CollapseEaseOut)
@@ -1394,7 +1395,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         val floatingTrack = playerState.currentTrack
         val floatingVisible = floatShown
         val floatingGlassStyle = miniPlayerStyle(playerState.settings.liquidGlassEnabled && LocalStyleSpec.current.dock == DockKind.FLOATING_GLASS)
-        if (floatingTrack != null && (floatingVisible || floatCoverMounted)) {
+        if (floatingTrack != null && !playerOpen && (floatingVisible || floatCoverMounted)) {
             FloatingCoverButton(
                 track = floatingTrack,
                 playing = playerState.playback.isPlaying,
