@@ -533,13 +533,20 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         if (state.libraryLoaded && neteaseSignedIn) viewModel.startComposerEnrichment()
     }
     LaunchedEffect(playerOpen) {
-        if (playerOpen && launchBounds == null && sheet.value < .01f && !sheet.dragging) {
-            val pressed = AppTouchOrigin.bounds?.takeIf {
-                android.os.SystemClock.uptimeMillis() - AppTouchOrigin.boundsAt < 3_000 && it.width > 4f && it.height > 4f
-            }
-            val mini = miniBounds
-            if (pressed != null && (mini == null || !pressed.overlaps(mini)) && pressed.top < rootSize.height - dockHeightPx) {
-                launchBounds = pressed
+        if (playerOpen && sheet.value < .01f && !sheet.dragging) {
+            val floating = if (floatActive && collapse.value > .05f) floatCoverBoundsHolder[0] else null
+            if (floating != null) {
+                launchBounds = floating
+                exitToFloating = true
+                skipFloatCollapse = true
+            } else if (launchBounds == null) {
+                val pressed = AppTouchOrigin.bounds?.takeIf {
+                    android.os.SystemClock.uptimeMillis() - AppTouchOrigin.boundsAt < 3_000 && it.width > 4f && it.height > 4f
+                }
+                val mini = miniBounds
+                if (pressed != null && (mini == null || !pressed.overlaps(mini)) && pressed.top < rootSize.height - dockHeightPx) {
+                    launchBounds = pressed
+                }
             }
         }
         val target = if (playerOpen) 1f else 0f

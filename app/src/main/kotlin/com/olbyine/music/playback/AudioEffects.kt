@@ -50,6 +50,7 @@ object AudioEffects {
 internal class EffectsOutput(
     delegate: AudioOutput,
     config: AudioOutputProvider.OutputConfig,
+    private val eqAllowed: Boolean = true,
 ) : ForwardingAudioOutput(delegate) {
     private val sampleRate = config.sampleRate
     private val channels = Integer.bitCount(config.channelMask).coerceIn(1, 8)
@@ -67,9 +68,12 @@ internal class EffectsOutput(
     private var gain = 1.0
     private val random = java.util.Random()
 
+    private fun active(effects: AudioEffects.Snapshot): Boolean =
+        if (eqAllowed) effects.active else effects.balance != 0f || effects.mono
+
     override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
         val effects = AudioEffects.current
-        if (supported && effects.active && buffer !== pending) {
+        if (supported && active(effects) && buffer !== pending) {
             prepare(effects)
             runCatching { process(buffer, buffer.position(), buffer.limit(), effects) }
         }
@@ -86,14 +90,15 @@ internal class EffectsOutput(
 
     private fun prepare(effects: AudioEffects.Snapshot) {
         if (effects === applied) return
+        val eq = if (eqAllowed) effects.eqActive else false
         val bands = EqBands.frequencies
-        val wanted = if (effects.eqActive) bands.indices.filter { effects.bands[it] != 0f && bands[it] < sampleRate * .45f } else emptyList()
+        val wanted = if (eq) bands.indices.filter { effects.bands[it] != 0f && bands[it] < sampleRate * .45f } else emptyList()
         val fresh = wanted.map { index -> Biquad.peaking(sampleRate.toDouble(), bands[index].toDouble(), 1.41, effects.bands[index].toDouble(), channels) }
         filters = fresh.mapIndexed { i, filter ->
             filters.getOrNull(i)?.takeIf { it.channels == channels }?.also { it.adopt(filter) } ?: filter
         }.toTypedArray()
-        val boost = if (effects.eqActive) (wanted.maxOfOrNull { effects.bands[it] } ?: 0f).coerceAtLeast(0f) else 0f
-        val preamp = if (effects.eqActive) effects.preampDb - boost * .6f else 0f
+        val boost = if (eq) (wanted.maxOfOrNull { effects.bands[it] } ?: 0f).coerceAtLeast(0f) else 0f
+        val preamp = if (eq) effects.preampDb - boost * .6f else 0f
         gain = 10.0.pow(preamp / 20.0)
         applied = effects
     }

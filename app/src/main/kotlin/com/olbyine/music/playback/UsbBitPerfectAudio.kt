@@ -254,7 +254,7 @@ internal class BitPerfectOutputProvider(
     override fun getAudioOutput(config: AudioOutputProvider.OutputConfig): AudioOutput {
         if (com.olbyine.music.playback.usb.UsbAudioDriver.isReady) {
             val direct = runCatching { com.olbyine.music.playback.usb.UsbDirectAudioOutput.create(config) }.getOrNull()
-            if (direct != null) return EnergyTapOutput(EffectsOutput(direct, config), config)
+            if (direct != null) return EnergyTapOutput(EffectsOutput(direct, config, eqAllowed = false), config)
         }
         val generation = ++outputGeneration
         clearMixer()

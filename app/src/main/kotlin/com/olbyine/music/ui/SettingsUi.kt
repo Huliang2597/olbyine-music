@@ -736,7 +736,7 @@ private fun AudioPage(state: MainUiState, viewModel: MainViewModel) {
 private fun EqualizerPage(state: MainUiState, viewModel: MainViewModel) {
     val settings = state.settings
     SettingsGroup("") {
-        SettingSwitch(Icons.Rounded.Equalizer, "均衡器", "对所有输出生效（包括 USB 独占驱动）；关闭时完全不处理音频",
+        SettingSwitch(Icons.Rounded.Equalizer, "均衡器", "对所有输出生效（不包括 USB 独占驱动）；关闭时完全不处理音频",
             settings.eqEnabled, viewModel::setEqEnabled)
     }
     SettingsGroup("预设") {
