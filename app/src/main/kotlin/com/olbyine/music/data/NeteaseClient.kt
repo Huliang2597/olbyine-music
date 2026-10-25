@@ -16,10 +16,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.math.BigInteger
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 data class NeteaseAccount(
@@ -106,6 +108,7 @@ data class NeteaseCollection(
     val artistId: Long = 0,
     val tags: List<String> = emptyList(),
     val complete: Boolean = true,
+    val saved: Boolean? = null,
 )
 
 data class NeteaseArtistHome(
@@ -460,6 +463,23 @@ class NeteaseClient(context: Context) {
         rows to result.optBoolean("hasMore")
     }
 
+    suspend fun albumSaved(albumId: Long): Boolean? = withContext(Dispatchers.IO) {
+        if (cookie == null) return@withContext null
+        runCatching {
+            val result = api("/api/album/detail/dynamic", JSONObject().put("id", albumId.toString()))
+            if (result.optInt("code") == 200 && result.has("isSub")) result.optBoolean("isSub") else null
+        }.getOrNull() ?: runCatching {
+            var offset = 0
+            repeat(10) {
+                val (rows, more) = savedAlbums(offset)
+                if (rows.any { it.id == albumId }) return@runCatching true
+                if (!more || rows.isEmpty()) return@runCatching false
+                offset += rows.size
+            }
+            null
+        }.getOrNull()
+    }
+
     suspend fun setAlbumSaved(albumId: Long, saved: Boolean) = withContext(Dispatchers.IO) {
         val result = eapi(if (saved) "/api/album/sub" else "/api/album/unsub", JSONObject().put("id", albumId.toString()))
         require(result.optInt("code") == 200) { result.optString("message").ifBlank { "操作失败" } }
@@ -788,8 +808,17 @@ class NeteaseClient(context: Context) {
 
     suspend fun setFollowUser(uid: Long, follow: Boolean) = withContext(Dispatchers.IO) {
         require(cookie != null) { "请先登录网易云音乐" }
-        val result = api("/api/user/${if (follow) "follow" else "delfollow"}/$uid", JSONObject().put("followId", uid.toString()))
-        require(result.optInt("code") == 200 || result.optInt("code") == 201) { result.optString("message").ifBlank { if (follow) "关注失败" else "取消关注失败" } }
+        val path = "/api/user/${if (follow) "follow" else "delfollow"}/$uid"
+        fun JSONObject.ok() = optInt("code") == 200 || optInt("code") == 201
+        // 关注接口以网页端 weapi 为准，App 端 eapi 兜底；api() 会把 eapi 的成功响应当成失败再发一次网页请求
+        val web = runCatching { weapiBlocking(path, JSONObject()) }
+        if (web.getOrNull()?.ok() == true) return@withContext
+        val app = runCatching { eapiBlocking(path, JSONObject().put("followId", uid.toString())) }
+        if (app.getOrNull()?.ok() == true) return@withContext
+        val message = listOfNotNull(web.getOrNull(), app.getOrNull())
+            .firstNotNullOfOrNull { result -> result.optString("message").takeIf { it.isNotBlank() && it != "null" } ?: result.optString("msg").takeIf { it.isNotBlank() && it != "null" } }
+            ?: web.exceptionOrNull()?.message
+        error(message ?: if (follow) "关注失败" else "取消关注失败")
     }
 
     private fun friend(row: JSONObject) = NeteaseFriend(
@@ -826,6 +855,7 @@ class NeteaseClient(context: Context) {
                     songs = playlistSongs(target.id),
                     ownerId = creator?.optLong("userId") ?: 0L,
                     tags = playlist.optJSONArray("tags")?.let { tags -> (0 until tags.length()).map { tags.optString(it) } }.orEmpty(),
+                    saved = playlist.optBoolean("subscribed"),
                 )
             }
         }
@@ -841,6 +871,7 @@ class NeteaseClient(context: Context) {
                 val description = playlist.optString("description").takeIf { it != "null" }.orEmpty().trim()
                 val tags = playlist.optJSONArray("tags")?.let { rows -> (0 until rows.length()).map { rows.optString(it) } }.orEmpty()
                 val ownerId = creator?.optLong("userId") ?: 0L
+                val saved = playlist.optBoolean("subscribed")
                 val ids = playlist.optJSONArray("trackIds").objects().map { it.optLong("id") }.filter { it > 0 }
                 val privileges = HashMap<Long, JSONObject>()
                 detail.optJSONArray("privileges").objects().forEach { privileges[it.optLong("id")] = it }
@@ -850,14 +881,14 @@ class NeteaseClient(context: Context) {
                 val missingFirst = firstIds.filter { !songs.containsKey(it) }
                 if (missingFirst.isNotEmpty()) songDetails(missingFirst).forEach { songs[it.id] = it }
                 fun snapshot() = ids.mapNotNull(songs::get)
-                emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = false))
+                emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = false, saved = saved))
                 val restIds = ids.drop(FIRST_BATCH).filter { !songs.containsKey(it) }
                 val chunks = restIds.chunked(REST_CHUNK)
                 chunks.forEachIndexed { index, chunk ->
                     songDetails(chunk).forEach { songs[it.id] = it }
-                    emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = index == chunks.lastIndex))
+                    emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = index == chunks.lastIndex, saved = saved))
                 }
-                if (chunks.isEmpty()) emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags))
+                if (chunks.isEmpty()) emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, saved = saved))
                 runCatching { writeCache(target.id, snapshot()) }
             }
             else -> emit(collection(target))
@@ -1565,6 +1596,38 @@ class NeteaseClient(context: Context) {
             json ?: viaApp ?: error("网易云请求失败（HTTP ${response.code}）")
         }
     }
+
+    private fun weapiBlocking(path: String, params: JSONObject): JSONObject {
+        val text = params.put("csrf_token", "").toString()
+        val secret = String(CharArray(16) { WEAPI_CHARS.random() })
+        val form = FormBody.Builder()
+            .add("params", weapiAes(weapiAes(text, WEAPI_PRESET_KEY), secret))
+            .add("encSecKey", weapiRsa(secret.reversed()))
+            .build()
+        val request = Request.Builder()
+            .url("https://music.163.com/weapi" + path.removePrefix("/api"))
+            .post(form)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+            .header("Referer", "https://music.163.com/")
+            .header("Cookie", "os=pc; appver=2.10.13" + (cookie?.let { "; MUSIC_U=$it" } ?: ""))
+            .build()
+        client.newCall(request).execute().use { response ->
+            require(response.isSuccessful) { "网易云请求失败（HTTP ${response.code}）" }
+            return JSONObject(response.body?.string().orEmpty().ifBlank { "{}" })
+        }
+    }
+
+    private fun weapiAes(text: String, key: String): String {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key.toByteArray(Charsets.US_ASCII), "AES"), IvParameterSpec(WEAPI_IV))
+        return android.util.Base64.encodeToString(cipher.doFinal(text.toByteArray(Charsets.UTF_8)), android.util.Base64.NO_WRAP)
+    }
+
+    private fun weapiRsa(text: String): String {
+        val value = BigInteger(1, text.toByteArray(Charsets.US_ASCII))
+        return value.modPow(BigInteger(WEAPI_PUBLIC_EXPONENT, 16), BigInteger(WEAPI_MODULUS, 16)).toString(16).padStart(256, '0')
+    }
+
     private fun eapiBlocking(path: String, params: JSONObject, host: String = "https://interface3.music.163.com"): JSONObject {
         client.newCall(eapiRequest(path, params, host)).execute().use { response ->
             require(response.isSuccessful) { "网易云请求失败（HTTP ${response.code}）" }
@@ -1631,6 +1694,12 @@ class NeteaseClient(context: Context) {
         private const val KEY_DEVICE = "device_id"
         private const val APP_VERSION = "8.20.20"
         private val EAPI_KEY = "e82ckenh8dichen8".toByteArray(Charsets.US_ASCII)
+        private const val WEAPI_PRESET_KEY = "0CoJUm6Qyw8W8jud"
+        private val WEAPI_IV = "0102030405060708".toByteArray(Charsets.US_ASCII)
+        private const val WEAPI_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        private const val WEAPI_PUBLIC_EXPONENT = "010001"
+        private const val WEAPI_MODULUS =
+            "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7"
 
         val QUALITIES = listOf(
             "standard" to "标准（128k）",
