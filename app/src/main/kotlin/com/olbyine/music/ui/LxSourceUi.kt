@@ -237,12 +237,12 @@ internal fun LxCustomSourceSection(onMessage: (String) -> Unit) {
             onDismissRequest = { pendingDelete = null },
             title = "删除「${target.name}」？",
             confirmButton = {
-                GlassTextButton(onClick = {
+                GlassTextButton(destructive = true, onClick = {
                     pendingDelete = null
                     store.remove(target.id)
                     refresh()
                     onMessage("已删除「${target.name}」")
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除") }
             },
             dismissButton = { GlassTextButton(onClick = { pendingDelete = null }) { Text("取消") } },
         ) {

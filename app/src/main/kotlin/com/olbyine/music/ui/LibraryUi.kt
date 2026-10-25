@@ -195,7 +195,7 @@ private data class LibraryPage(
     val drilledIn: Boolean get() = folderId != null || playlistId != null || albumKey != null || composerKey != null
 }
 
-private fun pageTracks(page: LibraryPage, state: MainUiState, albums: List<Album>, query: String): List<Track> {
+private fun pageTracks(page: LibraryPage, state: MainUiState, albums: List<Album>, query: String, playlistSort: LibrarySortMode?): List<Track> {
     val source = when (page.section) {
         LibrarySection.ALL, LibrarySection.FAVORITES -> state.visibleTracks
         LibrarySection.ALBUMS -> albums.firstOrNull { it.key == page.albumKey }?.tracks?.filter { it.matches(query) }.orEmpty()
@@ -215,15 +215,23 @@ private fun pageTracks(page: LibraryPage, state: MainUiState, albums: List<Album
         }
     }
     return when (page.section) {
-        LibrarySection.ALL, LibrarySection.FAVORITES, LibrarySection.PLAYLISTS, LibrarySection.ALBUMS, LibrarySection.COMPOSERS -> source
-        LibrarySection.FOLDERS -> when (state.librarySortMode) {
-            LibrarySortMode.TITLE, LibrarySortMode.TRACK_NUMBER, LibrarySortMode.ALBUM -> source.sortedWith(AlbumOrder)
-            LibrarySortMode.RECENT -> source.sortedWith(compareByDescending<Track> { it.addedAt }.thenBy { it.id })
-            LibrarySortMode.PLAYS -> source.sortedWith(compareByDescending<Track> { it.playCount }.thenByDescending { it.lastPlayedAt })
-            LibrarySortMode.ARTIST -> source.sortedWith(
-                compareBy<Track> { state.trackKeys[it.id]?.artist ?: SortKeys.cachedOrPlain(it.artist) }.then(AlbumOrder),
-            )
-        }
+        LibrarySection.ALL, LibrarySection.FAVORITES, LibrarySection.ALBUMS, LibrarySection.COMPOSERS -> source
+        LibrarySection.FOLDERS -> sortedForCollection(source, state.librarySortMode, state.trackKeys)
+        LibrarySection.PLAYLISTS -> playlistSort?.let { sortedForCollection(source, it, state.trackKeys) } ?: source
+    }
+}
+
+private fun sortedForCollection(source: List<Track>, mode: LibrarySortMode, keys: Map<String, TrackSortKeys>): List<Track> {
+    fun title(track: Track) = keys[track.id]?.title ?: SortKeys.cachedOrPlain(track.title)
+    fun artist(track: Track) = keys[track.id]?.artist ?: SortKeys.cachedOrPlain(track.artist)
+    fun album(track: Track) = keys[track.id]?.album ?: SortKeys.cachedOrPlain(track.album)
+    return when (mode) {
+        LibrarySortMode.TITLE -> source.sortedWith(compareBy<Track> { title(it) }.thenBy { it.id })
+        LibrarySortMode.ARTIST -> source.sortedWith(compareBy<Track> { artist(it) }.thenBy { title(it) })
+        LibrarySortMode.ALBUM -> source.sortedWith(compareBy<Track> { album(it) }.then(AlbumOrder))
+        LibrarySortMode.RECENT -> source.sortedWith(compareByDescending<Track> { it.addedAt }.thenBy { it.id })
+        LibrarySortMode.PLAYS -> source.sortedWith(compareByDescending<Track> { it.playCount }.thenByDescending { it.lastPlayedAt }.thenBy { title(it) })
+        LibrarySortMode.TRACK_NUMBER -> source.sortedWith(AlbumOrder)
     }
 }
 
@@ -250,6 +258,7 @@ private class TrackCallbacks(
     val onRemoveFromPlaylist: (String, String) -> Unit,
     val onReorderPlaylistTracks: (String, List<String>) -> Unit,
     val onPlayNext: (Track) -> Unit,
+    val reorderable: Boolean = true,
 )
 
 private class Selection {
@@ -260,6 +269,24 @@ private class Selection {
     }
     fun clear() {
         ids = emptySet()
+    }
+}
+
+// key() 放在独立的组合函数里：直接写在 LibraryScreen 中时，键值变化会让其后的 LaunchedEffect 重启，把刚开始的多选清空
+@Composable
+private fun LibraryBackHandlers(
+    selecting: Boolean,
+    searchOpen: Boolean,
+    drilledIn: Boolean,
+    underPlayer: Boolean,
+    onClearSelection: () -> Unit,
+    onCloseSearch: () -> Unit,
+    onBack: () -> Unit,
+) {
+    androidx.compose.runtime.key(selecting, searchOpen, drilledIn, underPlayer) {
+        BackHandler(enabled = selecting && !underPlayer, onBack = onClearSelection)
+        BackHandler(enabled = !selecting && searchOpen && !underPlayer, onBack = onCloseSearch)
+        BackHandler(enabled = !selecting && !searchOpen && drilledIn && !underPlayer, onBack = onBack)
     }
 }
 
@@ -358,6 +385,7 @@ internal fun LibraryScreen(
         }
     }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var playlistSort by rememberSaveable { mutableStateOf<LibrarySortMode?>(null) }
     var creatingPlaylist by remember { mutableStateOf(false) }
     var editingPlaylist by remember { mutableStateOf<Playlist?>(null) }
     var deletingPlaylist by remember { mutableStateOf<Playlist?>(null) }
@@ -380,8 +408,8 @@ internal fun LibraryScreen(
         albumKey = albumKey.takeIf { section == LibrarySection.ALBUMS && openAlbum != null },
         composerKey = composerKey.takeIf { section == LibrarySection.COMPOSERS && openComposer != null },
     )
-    val displayedTracks = remember(currentPage, state.tracks, state.visibleTracks, state.playlists, albums, query, state.librarySortMode, state.trackKeys) {
-        pageTracks(currentPage, state, albums, query)
+    val displayedTracks = remember(currentPage, state.tracks, state.visibleTracks, state.playlists, albums, query, state.librarySortMode, state.trackKeys, playlistSort) {
+        pageTracks(currentPage, state, albums, query, playlistSort)
     }
     val albumGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     var coverFlowIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -411,22 +439,26 @@ internal fun LibraryScreen(
         onPlayOrigin(currentOrigin())
         onShufflePlay(tracks)
     }
-    androidx.compose.runtime.key(selection.active, searchOpen, folderOpen || playlistOpen || albumOpen || composerOpen, underPlayer) {
-        BackHandler(enabled = selection.active && !underPlayer) { selection.clear() }
-        BackHandler(enabled = !selection.active && searchOpen && !underPlayer) {
+    LibraryBackHandlers(
+        selecting = selection.active,
+        searchOpen = searchOpen,
+        drilledIn = folderOpen || playlistOpen || albumOpen || composerOpen,
+        underPlayer = underPlayer,
+        onClearSelection = { selection.clear() },
+        onCloseSearch = {
             searchOpen = false
             onSearch("")
             focusManager.clearFocus()
-        }
-        BackHandler(enabled = !selection.active && !searchOpen && (folderOpen || playlistOpen || albumOpen || composerOpen) && !underPlayer) {
+        },
+        onBack = {
             when {
                 folderOpen -> onFolder(null)
                 playlistOpen -> onPlaylist(null)
                 composerOpen -> composerKey = null
                 else -> albumKey = null
             }
-        }
-    }
+        },
+    )
     LaunchedEffect(section, state.libraryFolderId, state.activePlaylistId, albumKey, composerKey) { selection.clear() }
 
     val callbacks = TrackCallbacks(
@@ -442,6 +474,7 @@ internal fun LibraryScreen(
         onRemoveFromPlaylist = onRemoveFromPlaylist,
         onReorderPlaylistTracks = onReorderPlaylistTracks,
         onPlayNext = onPlayNext,
+        reorderable = playlistSort == null,
     )
     val showsTracks = section == LibrarySection.ALL || section == LibrarySection.FAVORITES || folderOpen || playlistOpen || albumOpen || composerOpen
     val selectSection: (LibrarySection) -> Unit = { item ->
@@ -537,8 +570,8 @@ internal fun LibraryScreen(
                 val folderOpen = section == LibrarySection.FOLDERS && libraryFolderId != null
                 val selectedPlaylist = state.playlists.firstOrNull { it.id == page.playlistId }
                 val playlistOpen = section == LibrarySection.PLAYLISTS && selectedPlaylist != null
-                val displayedTracks = remember(page, state.tracks, state.visibleTracks, state.playlists, albums, query, state.librarySortMode, state.trackKeys) {
-                    pageTracks(page, state, albums, query)
+                val displayedTracks = remember(page, state.tracks, state.visibleTracks, state.playlists, albums, query, state.librarySortMode, state.trackKeys, playlistSort) {
+                    pageTracks(page, state, albums, query, playlistSort)
                 }
                 androidx.compose.runtime.CompositionLocalProvider(
                     LocalSharedAlbum provides SharedAlbumScope(this@SharedTransitionLayout, this@AnimatedContent),
@@ -678,8 +711,9 @@ internal fun LibraryScreen(
                                         onFanCard = { track -> playFromList(displayedTracks, displayedTracks.indexOf(track).coerceAtLeast(0)) },
                                         onPlay = { playAllFromList(displayedTracks) },
                                         onShuffle = { shuffleList(displayedTracks) },
-                                        sortMode = null,
-                                        onSortMode = onSortMode,
+                                        sortMode = playlistSort,
+                                        onSortMode = { playlistSort = it },
+                                        onCustomOrder = { playlistSort = null },
                                         extraAction = {
                                             OlbyineIconButton(Icons.Rounded.Add, "管理歌单歌曲", { addingSongs = true })
                                         },
@@ -725,7 +759,7 @@ internal fun LibraryScreen(
                                 }
                             }
                         }
-                        if (state.libraryViewMode == LibraryViewMode.TILES && !albumOpen && !composerOpen && displayedTracks.isNotEmpty()) {
+                        if (state.libraryViewMode == LibraryViewMode.TILES && !albumOpen && !composerOpen && displayedTracks.isNotEmpty() && !selection.active) {
                             val currentId = state.currentTrack?.id
                             val wallItems = remember(displayedTracks, currentId) {
                                 displayedTracks.map { WallItem(it.id, it.title, it.artist, it, it.id == currentId) }
@@ -744,7 +778,7 @@ internal fun LibraryScreen(
                             tracks = displayedTracks,
                             keys = state.trackKeys,
                             viewMode = if (albumOpen || composerOpen || state.libraryViewMode == LibraryViewMode.TILES) LibraryViewMode.LIST else state.libraryViewMode,
-                            sortMode = state.librarySortMode,
+                            sortMode = if (playlistOpen) playlistSort else state.librarySortMode,
                             indexEnabled = section == LibrarySection.ALL || section == LibrarySection.FAVORITES,
                             albumStyle = albumOpen,
                             currentTrackId = state.currentTrack?.id,
@@ -836,10 +870,11 @@ internal fun LibraryScreen(
                                 favoriteCount = favoriteCount,
                                 showsTracks = showsTracks,
                                 viewMode = state.libraryViewMode,
-                                sortMode = state.librarySortMode,
+                                sortMode = if (playlistOpen) playlistSort else state.librarySortMode,
                                 canSelect = showsTracks && displayedTracks.isNotEmpty(),
                                 onSection = selectSection,
-                                onSortMode = { mode -> haptics.tick(HapticArea.MENUS); onSortMode(mode) },
+                                onSortMode = { mode -> haptics.tick(HapticArea.MENUS); if (playlistOpen) playlistSort = mode else onSortMode(mode) },
+                                onCustomOrder = if (playlistOpen) { { haptics.tick(HapticArea.MENUS); playlistSort = null } } else null,
                                 onViewMode = onViewMode,
                                 albumStyle = if (section == LibrarySection.ALBUMS && !albumOpen) state.settings.albumStyle else null,
                                 onAlbumStyle = { style -> haptics.tick(HapticArea.MENUS); onAlbumStyle(style) },
@@ -883,8 +918,8 @@ internal fun LibraryScreen(
             onDismissRequest = { deletingPlaylist = null },
             title = "删除歌单？",
             confirmButton = {
-                GlassTextButton(onClick = { onDeletePlaylist(playlist.id); deletingPlaylist = null }) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                GlassTextButton(destructive = true, onClick = { onDeletePlaylist(playlist.id); deletingPlaylist = null }) {
+                    Text("删除")
                 }
             },
             dismissButton = { GlassTextButton(onClick = { deletingPlaylist = null }) { Text("取消") } },
@@ -900,12 +935,12 @@ internal fun LibraryScreen(
             onDismissRequest = { confirmDelete = false },
             title = "移除 $count 首歌曲？",
             confirmButton = {
-                GlassTextButton(onClick = {
+                GlassTextButton(destructive = true, onClick = {
                     haptics.heavy(HapticArea.MENUS)
                     onDeleteTracks(selection.ids)
                     selection.clear()
                     confirmDelete = false
-                }) { Text("移除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("移除") }
             },
             dismissButton = { GlassTextButton(onClick = { confirmDelete = false }) { Text("取消") } },
         ) { Text("这些歌曲会从音乐库和歌单中移除，原音频文件不会被删除。") }
@@ -947,10 +982,11 @@ private fun TitleHeader(
     favoriteCount: Int,
     showsTracks: Boolean,
     viewMode: LibraryViewMode,
-    sortMode: LibrarySortMode,
+    sortMode: LibrarySortMode?,
     canSelect: Boolean,
     onSection: (LibrarySection) -> Unit,
     onSortMode: (LibrarySortMode) -> Unit,
+    onCustomOrder: (() -> Unit)?,
     onViewMode: (LibraryViewMode) -> Unit,
     albumStyle: String?,
     onAlbumStyle: (String) -> Unit,
@@ -1023,6 +1059,9 @@ private fun TitleHeader(
                     if (showsTracks) {
                         MenuDivider()
                         MenuLabel("排序")
+                        if (onCustomOrder != null) {
+                            GlassMenuItem("自定义顺序", { menu = false; onCustomOrder() }, selected = sortMode == null)
+                        }
                         LibrarySortMode.entries.forEach { mode ->
                             GlassMenuItem(mode.label, { menu = false; onSortMode(mode) }, selected = mode == sortMode)
                         }
@@ -1327,7 +1366,7 @@ private fun TrackCollection(
     tracks: List<Track>,
     keys: Map<String, TrackSortKeys>,
     viewMode: LibraryViewMode,
-    sortMode: LibrarySortMode,
+    sortMode: LibrarySortMode?,
     indexEnabled: Boolean,
     albumStyle: Boolean,
     currentTrackId: String?,
@@ -1420,7 +1459,7 @@ private fun TrackCollection(
     }
     val letters = remember(tracks, sortMode, keys) {
         tracks.mapIndexed { index, track ->
-            val key = keys[track.id]?.forMode(sortMode) ?: SortKeys.cachedOrPlain(track.title)
+            val key = sortMode?.let { keys[track.id]?.forMode(it) } ?: SortKeys.cachedOrPlain(track.title)
             SortKeys.letter(key) to index
         }.distinctBy { it.first }.toMap()
     }
@@ -1669,6 +1708,7 @@ private fun CollectionHeader(
     onShuffle: () -> Unit,
     sortMode: LibrarySortMode?,
     onSortMode: (LibrarySortMode) -> Unit,
+    onCustomOrder: (() -> Unit)? = null,
     extraAction: (@Composable () -> Unit)? = null,
     onFanCard: ((Track) -> Unit)? = null,
 ) {
@@ -1703,14 +1743,14 @@ private fun CollectionHeader(
             Spacer(Modifier.width(8.dp))
             PillButton("随机", onShuffle, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = tracks.isNotEmpty())
             Spacer(Modifier.weight(1f))
-            if (sortMode != null) SortButton(sortMode, onSortMode)
+            if (sortMode != null || onCustomOrder != null) SortButton(sortMode, onSortMode, onCustomOrder)
         }
         Spacer(Modifier.height(12.dp))
     }
 }
 
 @Composable
-private fun SortButton(sortMode: LibrarySortMode, onSortMode: (LibrarySortMode) -> Unit) {
+private fun SortButton(sortMode: LibrarySortMode?, onSortMode: (LibrarySortMode) -> Unit, onCustomOrder: (() -> Unit)? = null) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         Row(
@@ -1719,9 +1759,12 @@ private fun SortButton(sortMode: LibrarySortMode, onSortMode: (LibrarySortMode) 
         ) {
             StyledIcon(Icons.AutoMirrored.Rounded.Sort, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(6.dp))
-            Text(sortLabel(sortMode), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(sortMode?.let(::sortLabel) ?: "自定义顺序", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         OlbyineDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (onCustomOrder != null) {
+                GlassMenuItem("自定义顺序", { expanded = false; onCustomOrder() }, selected = sortMode == null)
+            }
             LibrarySortMode.entries.forEach { mode ->
                 GlassMenuItem(sortLabel(mode), { expanded = false; onSortMode(mode) }, selected = mode == sortMode)
             }
@@ -1961,14 +2004,16 @@ private fun TrackActions(track: Track, callbacks: TrackCallbacks) {
             if (activePlaylist != null) {
                 val position = activePlaylist.trackIds.indexOf(track.id)
                 MenuDivider()
-                GlassMenuItem("在歌单中上移", {
-                    menu = false
-                    callbacks.onReorderPlaylistTracks(activePlaylist.id, moved(activePlaylist.trackIds, position, position - 1))
-                }, icon = Icons.Rounded.ArrowUpward, enabled = position > 0)
-                GlassMenuItem("在歌单中下移", {
-                    menu = false
-                    callbacks.onReorderPlaylistTracks(activePlaylist.id, moved(activePlaylist.trackIds, position, position + 1))
-                }, icon = Icons.Rounded.ArrowDownward, enabled = position >= 0 && position < activePlaylist.trackIds.lastIndex)
+                if (callbacks.reorderable) {
+                    GlassMenuItem("在歌单中上移", {
+                        menu = false
+                        callbacks.onReorderPlaylistTracks(activePlaylist.id, moved(activePlaylist.trackIds, position, position - 1))
+                    }, icon = Icons.Rounded.ArrowUpward, enabled = position > 0)
+                    GlassMenuItem("在歌单中下移", {
+                        menu = false
+                        callbacks.onReorderPlaylistTracks(activePlaylist.id, moved(activePlaylist.trackIds, position, position + 1))
+                    }, icon = Icons.Rounded.ArrowDownward, enabled = position >= 0 && position < activePlaylist.trackIds.lastIndex)
+                }
                 GlassMenuItem("移出当前歌单", { menu = false; callbacks.onRemoveFromPlaylist(activePlaylist.id, track.id) }, icon = Icons.Rounded.PlaylistRemove)
             }
             MenuDivider()
@@ -2013,8 +2058,8 @@ private fun TrackActions(track: Track, callbacks: TrackCallbacks) {
             onDismissRequest = { deleteDialog = false },
             title = "移除歌曲？",
             confirmButton = {
-                GlassTextButton(onClick = { deleteDialog = false; callbacks.onDelete(track) }) {
-                    Text("移除", color = MaterialTheme.colorScheme.error)
+                GlassTextButton(destructive = true, onClick = { deleteDialog = false; callbacks.onDelete(track) }) {
+                    Text("移除")
                 }
             },
             dismissButton = { GlassTextButton(onClick = { deleteDialog = false }) { Text("取消") } },

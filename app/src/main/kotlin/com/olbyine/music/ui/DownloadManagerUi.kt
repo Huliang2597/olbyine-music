@@ -62,8 +62,8 @@ internal fun DownloadManagerPage(viewModel: MainViewModel) {
                     )
                 }
                 if (records.isNotEmpty()) {
-                    GlassTextButton(onClick = { haptics.light(com.olbyine.music.data.HapticArea.MENUS); clearDialog = true }) {
-                        Text("清空", color = MaterialTheme.colorScheme.error)
+                    GlassTextButton(destructive = true, onClick = { haptics.light(com.olbyine.music.data.HapticArea.MENUS); clearDialog = true }) {
+                        Text("清空")
                     }
                 }
             }
@@ -92,10 +92,10 @@ internal fun DownloadManagerPage(viewModel: MainViewModel) {
             onDismissRequest = { target = null },
             title = "「${record.title}」",
             confirmButton = {
-                GlassTextButton(onClick = {
+                GlassTextButton(destructive = true, onClick = {
                     target = null
                     viewModel.deleteDownload(record, removeFile = true)
-                }) { Text("删除文件", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除文件") }
             },
             dismissButton = {
                 GlassTextButton(onClick = {
@@ -141,10 +141,10 @@ internal fun DownloadManagerPage(viewModel: MainViewModel) {
             onDismissRequest = { clearDialog = false },
             title = "清空下载记录？",
             confirmButton = {
-                GlassTextButton(onClick = {
+                GlassTextButton(destructive = true, onClick = {
                     clearDialog = false
                     viewModel.clearDownloadRecords(removeFiles = true)
-                }) { Text("连文件一起删", color = MaterialTheme.colorScheme.error) }
+                }) { Text("连文件一起删") }
             },
             dismissButton = {
                 GlassTextButton(onClick = {

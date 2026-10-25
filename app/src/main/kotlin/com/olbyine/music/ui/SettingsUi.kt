@@ -2171,7 +2171,7 @@ private fun AppleTokenDialog(hasToken: Boolean, onDismiss: () -> Unit, onSave: (
         confirmButton = { GlassTextButton(onClick = { onSave(value) }, enabled = value.trim().length > 20) { Text("保存") } },
         dismissButton = {
             Row {
-                if (hasToken) GlassTextButton(onClick = { onSave(null) }) { Text("清除", color = MaterialTheme.colorScheme.error) }
+                if (hasToken) GlassTextButton(destructive = true, onClick = { onSave(null) }) { Text("清除") }
                 GlassTextButton(onClick = onDismiss) { Text("取消") }
             }
         },
