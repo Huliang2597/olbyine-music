@@ -565,7 +565,7 @@ internal fun NeteasePlaylistManager(client: NeteaseClient, onBack: () -> Unit, o
             onDismissRequest = { deleting = null },
             title = "删除歌单？",
             confirmButton = {
-                GlassTextButton(onClick = {
+                GlassTextButton(destructive = true, onClick = {
                     deleting = null
                     own.remove(playlist)
                     scope.launch {
@@ -574,7 +574,7 @@ internal fun NeteasePlaylistManager(client: NeteaseClient, onBack: () -> Unit, o
                             "删除失败"
                         } else "已删除「${playlist.name}」"
                     }
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除") }
             },
             dismissButton = { GlassTextButton(onClick = { deleting = null }) { Text("取消") } },
         ) { Text("「${playlist.name}」会从你的网易云账号里删除，无法恢复。") }

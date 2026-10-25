@@ -285,11 +285,19 @@ internal fun GlassTextButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    destructive: Boolean = false,
     content: @Composable RowScope.() -> Unit,
 ) {
     val style = LocalStyleSpec.current.style
     if (style == UiStyle.MATERIAL) {
-        androidx.compose.material3.TextButton(onClick = onClick, modifier = modifier, enabled = enabled, content = content)
+        androidx.compose.material3.TextButton(
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled,
+            colors = if (destructive) androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            else androidx.compose.material3.ButtonDefaults.textButtonColors(),
+            content = content,
+        )
         return
     }
     val emphasis = LocalButtonEmphasis.current
@@ -302,13 +310,17 @@ internal fun GlassTextButton(
     val textAction = inDialog && style == UiStyle.COLOROS
     val fill = when {
         textAction -> Color.Transparent
+        emphasis && destructive -> colors.error
         emphasis -> colors.primary
         style == UiStyle.HYPEROS -> colors.surfaceContainerHigh
         else -> colors.onSurface.copy(alpha = if (dark) .14f else .075f)
     }
     val ink = when {
+        textAction && destructive -> colors.error
         textAction -> if (emphasis) colors.primary else colors.onSurface
+        emphasis && destructive -> colors.onError
         emphasis -> colors.onPrimary
+        destructive -> colors.error
         style == UiStyle.IOS && !inDialog -> colors.primary
         else -> colors.onSurface
     }
