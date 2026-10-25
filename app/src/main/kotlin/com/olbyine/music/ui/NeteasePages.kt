@@ -226,6 +226,7 @@ internal fun NeteaseProfileScreen(client: NeteaseClient, userId: Long, onBack: (
                                                 } catch (failure: Throwable) {
                                                     if (failure is CancellationException) throw failure
                                                     followed = !target
+                                                    android.widget.Toast.makeText(context, failure.message ?: "操作失败", android.widget.Toast.LENGTH_SHORT).show()
                                                 }
                                                 busy = false
                                             }
@@ -342,6 +343,7 @@ internal fun NeteasePeopleScreen(client: NeteaseClient, userId: Long, name: Stri
     var error by remember(userId, followers) { mutableStateOf<String?>(null) }
     val following = remember(userId, followers) { mutableStateListOf<Long>() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val me = client.account.value?.userId
     val load: () -> Unit = {
         if (!loading && more) {
@@ -391,8 +393,9 @@ internal fun NeteasePeopleScreen(client: NeteaseClient, userId: Long, name: Stri
                         PillButton(if (on) "已关注" else "关注", {
                             if (on) following.remove(person.userId) else following.add(person.userId)
                             scope.launch {
-                                runCatching { client.setFollowUser(person.userId, !on) }.onFailure {
+                                runCatching { client.setFollowUser(person.userId, !on) }.onFailure { failure ->
                                     if (on) following.add(person.userId) else following.remove(person.userId)
+                                    android.widget.Toast.makeText(context, failure.message ?: "操作失败", android.widget.Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }, style = if (on) PillStyle.TONAL else PillStyle.FILLED, height = 32.dp)
@@ -429,6 +432,11 @@ internal fun NeteaseCollectionScreen(
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = rememberCoroutineScope()
     var saved by remember(target.id) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(target.id, target.kind, client.signedIn) {
+        if (target.kind == NeteaseCollectionKind.ALBUM && client.signedIn && saved == null) {
+            client.albumSaved(target.id)?.let { if (saved == null) saved = it }
+        }
+    }
     val resumeKey = collectionKey(summary.kind.name, summary.id)
     val scopedPlay = LocalPlayNeteaseCollection.current
     val play: (Int, Boolean) -> Unit = { index, shuffle ->
@@ -516,7 +524,7 @@ internal fun NeteaseCollectionScreen(
                         PillButton("随机播放", { if (songs.isNotEmpty()) play(0, true) }, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = songs.isNotEmpty(), height = 40.dp)
                         Spacer(Modifier.weight(1f))
                         if (client.signedIn && (summary.kind == NeteaseCollectionKind.ALBUM || (summary.kind == NeteaseCollectionKind.PLAYLIST && !summary.own))) {
-                            val on = saved == true
+                            val on = (saved ?: data?.saved) == true
                             OlbyineIconButton(
                                 if (on) Icons.Rounded.Check else Icons.Rounded.LibraryAdd,
                                 if (on) "取消收藏" else "收藏",
@@ -550,7 +558,7 @@ internal fun NeteaseCollectionScreen(
         if (data == null && loaded.loading) skeletonRows(10)
         else if (data == null) item(key = "state") { LoadingOrError(false, loaded.error, retry, itemMotion()) }
         else if (songs.isEmpty() && query.isNotBlank()) item(key = "none") {
-            Text("没有找到「」", itemMotion().fillMaxWidth().padding(24.dp), color = colors.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text("没有找到「$query」", itemMotion().fillMaxWidth().padding(24.dp), color = colors.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
         itemsIndexed(songs, key = { index, it -> "$index:${it.id}" }) { index, song ->
             Box(itemMotion().padding(horizontal = 10.dp)) {
