@@ -291,23 +291,6 @@ private fun LibraryBackHandlers(
 }
 
 @Composable
-private fun LibraryBackHandlers(
-    selecting: Boolean,
-    searchOpen: Boolean,
-    drilledIn: Boolean,
-    underPlayer: Boolean,
-    onClearSelection: () -> Unit,
-    onCloseSearch: () -> Unit,
-    onBack: () -> Unit,
-) {
-    androidx.compose.runtime.key(selecting, searchOpen, drilledIn, underPlayer) {
-        BackHandler(enabled = selecting && !underPlayer, onBack = onClearSelection)
-        BackHandler(enabled = !selecting && searchOpen && !underPlayer, onBack = onCloseSearch)
-        BackHandler(enabled = !selecting && !searchOpen && drilledIn && !underPlayer, onBack = onBack)
-    }
-}
-
-@Composable
 internal fun LibraryScreen(
     state: MainUiState,
     albums: List<Album>,
