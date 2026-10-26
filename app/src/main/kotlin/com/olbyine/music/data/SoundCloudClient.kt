@@ -183,7 +183,7 @@ class SoundCloudClient(context: Context) {
     }
 
     private fun sendJson(method: String, path: String, body: JSONObject?): String {
-        val url = "$API$path".toHttpUrl().newBuilder().setQueryParameter("client_id", clientId()).setQueryParameter("app_locale", "zh").build()
+        val url = (if (path.startsWith("http")) path else "$API$path").toHttpUrl().newBuilder().setQueryParameter("client_id", clientId()).setQueryParameter("app_locale", "zh").build()
         val payload = body?.toString()?.toRequestBody("application/json; charset=utf-8".toMediaType())
         val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).header("Accept", "application/json")
             .header("Origin", "https://soundcloud.com").header("Referer", "https://soundcloud.com/")
@@ -398,10 +398,20 @@ class SoundCloudClient(context: Context) {
     }
 
     suspend fun setFollowing(userId: Long, follow: Boolean) = withContext(Dispatchers.IO) {
-        runCatching { sendJson(if (follow) "POST" else "DELETE", "/me/followings/$userId", if (follow) JSONObject() else null) }
-            .recoverCatching { sendJson(if (follow) "PUT" else "DELETE", "/users/${me()}/followings/$userId", null) }
-            .getOrThrow()
-        Unit
+        val method = if (follow) "PUT" else "DELETE"
+        val urn = "soundcloud:users:$userId"
+        val attempts = listOf<() -> Unit>(
+            { sendJson(method, "$PUBLIC_API/me/followings/$userId", null) },
+            { sendJson(method, "$PUBLIC_API/me/followings/$urn", null) },
+            { sendJson(method, "/me/followings/$userId", null) },
+            { sendJson(method, "/me/followings/$urn", null) },
+        )
+        var first: Throwable? = null
+        for (attempt in attempts) {
+            val failure = runCatching(attempt).exceptionOrNull() ?: return@withContext
+            if (first == null) first = failure
+        }
+        throw first ?: IllegalStateException("操作失败")
     }
 
     suspend fun ownPlaylists(): List<ScPlaylist> = withContext(Dispatchers.IO) {
@@ -620,6 +630,7 @@ class SoundCloudClient(context: Context) {
 
     companion object {
         private const val API = "https://api-v2.soundcloud.com"
+        private const val PUBLIC_API = "https://api.soundcloud.com"
         const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
         private const val KEY_CLIENT_ID = "client_id"
         private const val KEY_TOKEN = "oauth_token"

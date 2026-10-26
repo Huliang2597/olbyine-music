@@ -21,9 +21,9 @@
         android:enableOnBackInvokedCallback="true"
         android:fullBackupContent="false"
         android:hardwareAccelerated="true"
-        android:icon="@mipmap/ic_launcher_aurora"
+        android:icon="@mipmap/ic_launcher_porcelain"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_aurora"
+        android:roundIcon="@mipmap/ic_launcher_porcelain"
         android:supportsRtl="true"
         android:theme="@style/Theme.Olbyine"
         android:usesCleartextTraffic="true"
@@ -48,7 +48,7 @@
 
         <activity-alias
             android:name=".IconAurora"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_aurora"
             android:roundIcon="@mipmap/ic_launcher_aurora"
@@ -72,7 +72,7 @@
         </activity-alias>
         <activity-alias
             android:name=".IconPorcelain"
-            android:enabled="false"
+            android:enabled="true"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_porcelain"
             android:roundIcon="@mipmap/ic_launcher_porcelain"

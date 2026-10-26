@@ -53,6 +53,8 @@ internal class TouchOrigin {
 
 internal val AppTouchOrigin = TouchOrigin()
 
+internal val LocalOverlayMiniInset = staticCompositionLocalOf { 0.dp }
+
 internal fun Modifier.trackTouches(origin: TouchOrigin): Modifier = pointerInput(origin) {
     awaitPointerEventScope {
         while (true) {

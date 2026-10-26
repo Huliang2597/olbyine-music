@@ -34,6 +34,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FileDownload
@@ -262,6 +265,35 @@ internal class TrackActions(
 
 internal val LocalTrackActions = androidx.compose.runtime.staticCompositionLocalOf<TrackActions?> { null }
 
+internal object SongSelectionHook {
+    var start: (() -> Unit)? = null
+}
+
+@Composable
+internal fun SongCopyMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    title: String,
+    artist: String,
+    album: String,
+) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    fun copy(label: String, value: String) {
+        if (value.isBlank()) {
+            android.widget.Toast.makeText(context, "没有$label", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        clipboard.setText(androidx.compose.ui.text.AnnotatedString(value))
+        android.widget.Toast.makeText(context, "已复制$label", android.widget.Toast.LENGTH_SHORT).show()
+    }
+    OlbyineDropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        GlassMenuItem("复制歌曲名", { onDismiss(); copy("歌曲名", title) }, icon = Icons.Rounded.ContentCopy)
+        GlassMenuItem("复制艺人名", { onDismiss(); copy("艺人名", artist) }, icon = Icons.Rounded.Person)
+        GlassMenuItem("复制专辑名", { onDismiss(); copy("专辑名", album) }, icon = Icons.Rounded.Album)
+    }
+}
+
 @Composable
 internal fun HeartWithMenu(
     track: () -> Track?,
@@ -298,6 +330,9 @@ internal fun HeartWithMenu(
         )
         if (actions != null && showQueueActions) {
             OlbyineDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                SongSelectionHook.start?.let { startSelect ->
+                    GlassMenuItem("多选", { open = false; startSelect() }, icon = Icons.Rounded.DoneAll)
+                }
                 GlassMenuItem("收藏到歌单", { open = false; track()?.let(actions.addToPlaylist) }, icon = Icons.AutoMirrored.Rounded.PlaylistAdd)
                 GlassMenuItem("下一首播放", { open = false; track()?.let(actions.playNext) }, icon = Icons.AutoMirrored.Rounded.PlaylistPlay)
                 GlassMenuItem("加入播放列表", { open = false; track()?.let(actions.enqueue) }, icon = Icons.AutoMirrored.Rounded.QueueMusic)
@@ -308,6 +343,11 @@ internal fun HeartWithMenu(
                     if (choices.size > 1 && onOpenArtistId != null) choosingArtist = choices else onOpenArtist()
                 }, icon = Icons.Rounded.Mic)
                 if (onOpenAlbum != null) GlassMenuItem("打开专辑页", { open = false; onOpenAlbum() }, icon = Icons.Rounded.Album)
+            }
+        }
+        if (choosingArtist != null) {
+            androidx.compose.runtime.LaunchedEffect(choosingArtist) {
+                runCatching { com.olbyine.music.data.ArtistAvatars.resolve?.invoke(choosingArtist.orEmpty().map { it.second }) }
             }
         }
         choosingArtist?.let { choices ->
@@ -334,13 +374,17 @@ internal fun HeartWithMenu(
                                 .padding(horizontal = 10.dp, vertical = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            val avatar = com.olbyine.music.data.ArtistAvatars.get(name)
                             Box(
                                 Modifier
                                     .size(38.dp)
                                     .clip(androidx.compose.foundation.shape.CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = .14f)),
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)),
                                 contentAlignment = Alignment.Center,
                             ) {
+                                if (avatar != null) {
+                                    UrlImage("$avatar?param=100y100", Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape))
+                                } else
                                 Text(
                                     name.trim().take(1).ifBlank { "音" },
                                     style = MaterialTheme.typography.titleMedium,

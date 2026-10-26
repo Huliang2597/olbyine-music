@@ -16,10 +16,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.math.BigInteger
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 data class NeteaseAccount(
@@ -106,6 +108,7 @@ data class NeteaseCollection(
     val artistId: Long = 0,
     val tags: List<String> = emptyList(),
     val complete: Boolean = true,
+    val saved: Boolean? = null,
 )
 
 data class NeteaseArtistHome(
@@ -121,6 +124,7 @@ data class NeteaseArtistHome(
     val albumCount: Int,
     val mvCount: Int,
     val accountUserId: Long = 0,
+    val followed: Boolean = false,
 )
 
 data class NeteaseWikiSection(val title: String, val entries: List<NeteaseWikiEntry>)
@@ -198,6 +202,14 @@ enum class QrLoginState { WAITING, SCANNED, CONFIRMED, EXPIRED, ERROR }
 data class QrLoginStatus(val state: QrLoginState, val nickname: String? = null, val message: String? = null)
 
 class NeteaseClient(context: Context) {
+    private val appContext: Context = context.applicationContext
+    private val antiCheat by lazy { NeteaseAntiCheat(appContext) }
+
+    init {
+        ArtistAvatars.resolve = { names -> warmArtistAvatars(names) }
+    }
+    private var antiCheatToken: String? = null
+
     private val preferences = context.getSharedPreferences("netease_account", Context.MODE_PRIVATE)
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -211,6 +223,8 @@ class NeteaseClient(context: Context) {
     val account: StateFlow<NeteaseAccount?> = _account.asStateFlow()
 
     val signedIn: Boolean get() = cookie != null
+
+    val musicUCookie: String? get() = cookie
 
     private val cookie: String? get() = preferences.getString(KEY_MUSIC_U, null)
 
@@ -230,13 +244,17 @@ class NeteaseClient(context: Context) {
                 802 -> QrLoginStatus(QrLoginState.SCANNED, body.optString("nickname").takeIf(String::isNotBlank))
                 800 -> QrLoginStatus(QrLoginState.EXPIRED, message = "二维码已过期")
                 803 -> {
-                    val musicU = response.headers("Set-Cookie").firstNotNullOfOrNull { header ->
+                    val setCookies = response.headers("Set-Cookie")
+                    val musicU = setCookies.firstNotNullOfOrNull { header ->
                         Regex("MUSIC_U=([^;]+)").find(header)?.groupValues?.get(1)
                     } ?: Regex("MUSIC_U=([^;]+)").find(body.optString("cookie"))?.groupValues?.get(1)
+                    val csrfValue = setCookies.firstNotNullOfOrNull { header ->
+                        Regex("__csrf=([^;]+)").find(header)?.groupValues?.get(1)
+                    }
                     if (musicU.isNullOrBlank()) {
                         QrLoginStatus(QrLoginState.ERROR, message = "登录成功但没有拿到账号凭据，请改用网页登录")
                     } else {
-                        saveCookie(musicU)
+                        saveCookie(musicU, csrfValue)
                         refreshAccount()
                         QrLoginStatus(QrLoginState.CONFIRMED)
                     }
@@ -257,12 +275,17 @@ class NeteaseClient(context: Context) {
     }
 
     fun signOut() {
-        preferences.edit().remove(KEY_MUSIC_U).remove(KEY_ACCOUNT).apply()
+        csrfToken = null
+        preferences.edit().remove(KEY_MUSIC_U).remove(KEY_ACCOUNT).remove(KEY_CSRF).apply()
         _account.value = null
     }
 
-    private fun saveCookie(musicU: String) {
+    private fun saveCookie(musicU: String, csrfValue: String? = null) {
         preferences.edit().putString(KEY_MUSIC_U, musicU).apply()
+        if (!csrfValue.isNullOrBlank()) {
+            csrfToken = csrfValue
+            preferences.edit().putString(KEY_CSRF, csrfValue).apply()
+        }
     }
 
     suspend fun refreshAccount(): NeteaseAccount? = withContext(Dispatchers.IO) {
@@ -458,6 +481,23 @@ class NeteaseClient(context: Context) {
             )
         }
         rows to result.optBoolean("hasMore")
+    }
+
+    suspend fun albumSaved(albumId: Long): Boolean? = withContext(Dispatchers.IO) {
+        if (cookie == null) return@withContext null
+        runCatching {
+            val result = api("/api/album/detail/dynamic", JSONObject().put("id", albumId.toString()))
+            if (result.optInt("code") == 200 && result.has("isSub")) result.optBoolean("isSub") else null
+        }.getOrNull() ?: runCatching {
+            var offset = 0
+            repeat(10) {
+                val (rows, more) = savedAlbums(offset)
+                if (rows.any { it.id == albumId }) return@runCatching true
+                if (!more || rows.isEmpty()) return@runCatching false
+                offset += rows.size
+            }
+            null
+        }.getOrNull()
     }
 
     suspend fun setAlbumSaved(albumId: Long, saved: Boolean) = withContext(Dispatchers.IO) {
@@ -786,10 +826,94 @@ class NeteaseClient(context: Context) {
         result.optJSONArray("followeds").objects().map(::friend) to result.optBoolean("more")
     }
 
+    private fun followAttempts(attempts: List<() -> JSONObject>, fallback: String) {
+        val report = ArrayList<String>()
+        attempts.forEachIndexed { index, attempt ->
+            val result = runCatching { attempt() }
+            val body = result.getOrNull()
+            if (body == null) {
+                report += "#$index ${result.exceptionOrNull()?.message}"
+            } else {
+                val code = body.optInt("code", -1)
+                if (code == 200 || code == 201) return
+                report += code.toString()
+            }
+        }
+        error("$fallback（${report.take(6).joinToString("/")}）")
+    }
+
+    suspend fun warmArtistAvatars(names: List<String>) = withContext(Dispatchers.IO) {
+        names.map { it.trim() }.filter { it.isNotBlank() }.distinct().forEach { name ->
+            if (ArtistAvatars.map[name] != null) return@forEach
+            val url = runCatching { findArtist(name)?.pictureUrl }.getOrNull()
+            if (!url.isNullOrBlank()) {
+                ArtistAvatars.map[name] = url.substringBefore("?param=")
+                return@forEach
+            }
+            val home = runCatching { findArtist(name)?.id?.let { artistHome(it).avatarUrl } }.getOrNull()
+            if (!home.isNullOrBlank()) ArtistAvatars.map[name] = home.substringBefore("?param=")
+        }
+    }
+
+    suspend fun followingArtistIds(): Set<Long> = withContext(Dispatchers.IO) {
+        if (cookie == null) return@withContext emptySet()
+        val ids = LinkedHashSet<Long>()
+        var offset = 0
+        var page = 0
+        while (page < 12) {
+            val body = runCatching {
+                weapiBlocking("/api/artist/sublist", JSONObject().put("limit", "100").put("offset", offset.toString()).put("total", "true"))
+            }.getOrNull() ?: break
+            val data = body.optJSONObject("data") ?: body
+            val array = data.optJSONArray("artists") ?: data.optJSONArray("data") ?: break
+            var added = 0
+            for (index in 0 until array.length()) {
+                val row = array.optJSONObject(index) ?: continue
+                val id = row.optLong("id").takeIf { it > 0 } ?: continue
+                if (ids.add(id)) added++
+            }
+            offset += array.length()
+            page++
+            if (array.length() < 100 || added == 0) break
+        }
+        ids
+    }
+
+    suspend fun setFollowArtist(artistId: Long, follow: Boolean) = withContext(Dispatchers.IO) {
+        require(cookie != null) { "请先登录网易云音乐" }
+        val action = if (follow) "sub" else "unsub"
+        val body = JSONObject().put("artistId", artistId.toString()).put("artistIds", "[$artistId]")
+        followAttempts(
+            listOf(
+                { weapiBlocking("/api/artist/$action", JSONObject(body.toString())) },
+                { eapiBlocking("/api/artist/$action", JSONObject(body.toString())) },
+                { eapiBlocking("/api/artist/$action", JSONObject().put("id", artistId.toString())) },
+            ),
+            if (follow) "关注失败" else "取消关注失败",
+        )
+    }
+
     suspend fun setFollowUser(uid: Long, follow: Boolean) = withContext(Dispatchers.IO) {
         require(cookie != null) { "请先登录网易云音乐" }
-        val result = api("/api/user/${if (follow) "follow" else "delfollow"}/$uid", JSONObject().put("followId", uid.toString()))
-        require(result.optInt("code") == 200 || result.optInt("code") == 201) { result.optString("message").ifBlank { if (follow) "关注失败" else "取消关注失败" } }
+        val action = if (follow) "follow" else "delfollow"
+        val token = runCatching { antiCheat.token() }.getOrNull()?.takeIf { it.isNotBlank() }
+        antiCheatToken = token
+        val guard = if (token != null) mapOf("X-antiCheatToken" to token) else emptyMap()
+        val batch = JSONObject().put("ids", "[$uid]")
+        followAttempts(
+            listOf(
+                { weapiRaw("/api/user/$action/$uid", JSONObject().put("id", uid.toString()).put("csrf_token", csrf()), guard) },
+                { weapiRaw("/api/user/$action/batch", JSONObject(batch.toString()).put("csrf_token", csrf()), guard) },
+                { plainBlocking("/api/user/$action/batch", JSONObject(batch.toString())) },
+                { linuxBlocking("/api/user/$action/$uid", JSONObject()) },
+                { weapiRaw("/api/user/$action/$uid", JSONObject().put("csrf_token", csrf()), guard) },
+                { plainBlocking("/api/user/$action/$uid", JSONObject(), guard) },
+                { weapiBlocking("/api/user/$action/$uid", JSONObject()) },
+                { eapiBlocking("/api/user/$action/$uid", JSONObject()) },
+                { eapiBlocking("/api/user/$action", JSONObject().put("id", uid.toString())) },
+            ),
+            if (follow) "关注失败" else "取消关注失败",
+        )
     }
 
     private fun friend(row: JSONObject) = NeteaseFriend(
@@ -826,6 +950,7 @@ class NeteaseClient(context: Context) {
                     songs = playlistSongs(target.id),
                     ownerId = creator?.optLong("userId") ?: 0L,
                     tags = playlist.optJSONArray("tags")?.let { tags -> (0 until tags.length()).map { tags.optString(it) } }.orEmpty(),
+                    saved = playlist.optBoolean("subscribed"),
                 )
             }
         }
@@ -841,6 +966,7 @@ class NeteaseClient(context: Context) {
                 val description = playlist.optString("description").takeIf { it != "null" }.orEmpty().trim()
                 val tags = playlist.optJSONArray("tags")?.let { rows -> (0 until rows.length()).map { rows.optString(it) } }.orEmpty()
                 val ownerId = creator?.optLong("userId") ?: 0L
+                val saved = playlist.optBoolean("subscribed")
                 val ids = playlist.optJSONArray("trackIds").objects().map { it.optLong("id") }.filter { it > 0 }
                 val privileges = HashMap<Long, JSONObject>()
                 detail.optJSONArray("privileges").objects().forEach { privileges[it.optLong("id")] = it }
@@ -850,14 +976,14 @@ class NeteaseClient(context: Context) {
                 val missingFirst = firstIds.filter { !songs.containsKey(it) }
                 if (missingFirst.isNotEmpty()) songDetails(missingFirst).forEach { songs[it.id] = it }
                 fun snapshot() = ids.mapNotNull(songs::get)
-                emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = false))
+                emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = false, saved = saved))
                 val restIds = ids.drop(FIRST_BATCH).filter { !songs.containsKey(it) }
                 val chunks = restIds.chunked(REST_CHUNK)
                 chunks.forEachIndexed { index, chunk ->
                     songDetails(chunk).forEach { songs[it.id] = it }
-                    emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = index == chunks.lastIndex))
+                    emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, complete = index == chunks.lastIndex, saved = saved))
                 }
-                if (chunks.isEmpty()) emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags))
+                if (chunks.isEmpty()) emit(NeteaseCollection(summary, description, snapshot(), ownerId = ownerId, tags = tags, saved = saved))
                 runCatching { writeCache(target.id, snapshot()) }
             }
             else -> emit(collection(target))
@@ -1028,12 +1154,76 @@ class NeteaseClient(context: Context) {
             albumCount = artist.optInt("albumSize"),
             mvCount = artist.optInt("mvSize"),
             accountUserId = head?.optJSONObject("user")?.optLong("userId") ?: artist.optLong("accountId"),
+            followed = head?.optBoolean("followed") == true || artist.optBoolean("followed"),
         ).also { if (it.name.isBlank()) error("找不到这位歌手") }
     }
 
     suspend fun artistAlbums(id: Long, offset: Int = 0): List<NeteasePlaylistSummary> = withContext(Dispatchers.IO) {
         api("/api/artist/albums/$id", JSONObject().put("limit", "60").put("offset", offset.toString()).put("total", "true"))
             .optJSONArray("hotAlbums").objects().map(::albumSummary)
+    }
+
+    data class MusicMemory(val firstListen: String?, val playCount: String?, val debug: String? = null)
+
+    suspend fun songMemory(songId: Long): MusicMemory? = withContext(Dispatchers.IO) {
+        if (cookie == null) return@withContext null
+        val response = runCatching {
+            api("/api/content/activity/music/first/listen/info", JSONObject().put("songId", songId.toString()))
+        }.getOrNull() ?: return@withContext MusicMemory(null, null, "请求失败")
+        val code = response.optInt("code", -1)
+        val data = response.opt("data")
+        if (data == null || data == JSONObject.NULL) {
+            return@withContext MusicMemory(null, null, "code=$code ${response.optString("message")}")
+        }
+        val leaves = LinkedHashMap<String, Any>()
+        fun collect(node: Any?, depth: Int) {
+            if (depth > 8) return
+            when (node) {
+                is JSONObject -> node.keys().forEach { key ->
+                    val value = node.opt(key)
+                    if (value is JSONObject || value is JSONArray) collect(value, depth + 1) else leaves[key] = value
+                }
+                is JSONArray -> for (i in 0 until node.length()) collect(node.opt(i), depth + 1)
+                else -> Unit
+            }
+        }
+        collect(data, 0)
+        fun pick(needles: List<String>): Any? = needles.firstNotNullOfOrNull { needle ->
+            leaves.entries.firstOrNull { (key, value) ->
+                value != null && value != JSONObject.NULL && value.toString().isNotBlank() &&
+                    key.contains(needle, ignoreCase = true)
+            }?.value
+        }
+        fun asDate(value: Any?): String? {
+            if (value == null) return null
+            val raw = value.toString().trim()
+            if (raw.isBlank() || raw == "0") return null
+            val digits = raw.toLongOrNull()
+            if (digits != null) {
+                if (digits < 100000000L) return null
+                val millis = if (digits > 100000000000L) digits else digits * 1000
+                return java.text.SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(java.util.Date(millis))
+            }
+            return Regex("""\d{4}-\d{2}-\d{2}""").find(raw)?.value
+        }
+        fun asCount(value: Any?): String? {
+            if (value == null) return null
+            val raw = value.toString().trim()
+            val number = raw.toLongOrNull() ?: Regex("""\d+""").find(raw)?.value?.toLongOrNull()
+            if (number == null || number <= 0) return null
+            return "$number 次"
+        }
+        val firstListen = asDate(pick(listOf("firstlisten", "firstplay", "first_time", "firstdate", "first_listen")))
+            ?: asDate(pick(listOf("first", "listentime", "listen_time", "date")))
+        val playCount = asCount(pick(listOf("playcount", "playcnt", "listencount", "playtimes", "playnum", "totalplay", "listenplay")))
+            ?: asCount(pick(listOf("count", "cnt", "times", "num")))
+        val debug = buildString {
+            append("code=").append(code).append("; ")
+            leaves.entries.take(12).forEach { (key, value) ->
+                append(key).append('=').append(value.toString().take(24)).append(" | ")
+            }
+        }
+        MusicMemory(firstListen, playCount, debug)
     }
 
     suspend fun songWiki(songId: Long): List<NeteaseWikiSection> = withContext(Dispatchers.IO) {
@@ -1046,7 +1236,8 @@ class NeteaseClient(context: Context) {
         }.getOrNull()
         val sections = ArrayList<NeteaseWikiSection>()
         listOfNotNull(summary, full).forEach { root -> collectBlocks(root, 0) { block -> wikiSection(block)?.let(sections::add) } }
-        sections.groupBy { it.title.ifBlank { it.entries.firstOrNull()?.title.orEmpty() } }
+        sections.filter { it.entries.isNotEmpty() }
+            .groupBy { it.title.ifBlank { it.entries.firstOrNull()?.title.orEmpty() } }
             .map { (_, same) -> same.maxBy { it.entries.size } }
     }
 
@@ -1258,7 +1449,7 @@ class NeteaseClient(context: Context) {
             "buildver=${now / 1000}; resolution=1920x1080; requestId=$requestId"
         val request = Request.Builder()
             .url("https://interface3.music.163.com/api/middle/im/token/get?bizName=music_listenTogether")
-            .header("Cookie", cookieHeader)
+            .header("Cookie", "os=pc" + (cookie?.let { "; MUSIC_U=$it" } ?: ""))
             .header("Accept", "application/json")
             .header("Accept-Language", "zh-CN,zh;q=0.9")
             .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -1565,8 +1756,155 @@ class NeteaseClient(context: Context) {
             json ?: viaApp ?: error("网易云请求失败（HTTP ${response.code}）")
         }
     }
+
+    private val cookieJar = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun seedJar() {
+        if (cookieJar.isNotEmpty()) return
+        val musicU = cookie ?: return
+        val stamp = System.currentTimeMillis().toString()
+        val nnid = (1..32).map { "0123456789abcdef".random() }.joinToString("")
+        cookieJar["MUSIC_U"] = musicU
+        cookieJar["os"] = "pc"
+        cookieJar["appver"] = "2.10.13"
+        cookieJar["channel"] = "netease"
+        cookieJar["osver"] = "Microsoft-Windows-10-Professional-build-19045-64bit"
+        cookieJar["_ntes_nuid"] = nnid
+        cookieJar["_ntes_nnid"] = "$nnid,$stamp"
+        cookieJar["WNMCID"] = "%.6s.%s.01.0".format((1..6).map { "abcdefghijklmnopqrstuvwxyz".random() }.joinToString(""), stamp)
+        cookieJar["WEVNSM"] = "1.0.0"
+        cookieJar["NMTID"] = "00O" + (1..19).map { "0123456789abcdefghijklmnop".random() }.joinToString("")
+    }
+
+    private fun rememberCookies(response: okhttp3.Response) {
+        seedJar()
+        response.headers("Set-Cookie").forEach { header ->
+            val pair = header.substringBefore(';')
+            val name = pair.substringBefore('=', "").trim()
+            val value = pair.substringAfter('=', "").trim()
+            if (name.isNotEmpty() && value.isNotEmpty()) cookieJar[name] = value
+        }
+        cookieJar["__csrf"]?.takeIf { it.isNotBlank() }?.let { csrfToken = it }
+    }
+
+    private fun cookieHeader(): String {
+        seedJar()
+        return cookieJar.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
+
+    private var csrfToken: String? = null
+
+    private fun csrf(): String {
+        csrfToken?.let { return it }
+        preferences.getString(KEY_CSRF, null)?.takeIf { it.isNotBlank() }?.let { stored ->
+            csrfToken = stored
+            return stored
+        }
+        val musicU = cookie ?: return ""
+        val request = Request.Builder()
+            .url("https://music.163.com/")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+            .header("Cookie", "os=pc; appver=2.10.13; MUSIC_U=$musicU")
+            .build()
+        val token = runCatching {
+            client.newCall(request).execute().use { response ->
+                response.headers("Set-Cookie").mapNotNull { header ->
+                    Regex("__csrf=([^;]+)").find(header)?.groupValues?.getOrNull(1)
+                }.firstOrNull { it.isNotBlank() }
+            }
+        }.getOrNull().orEmpty()
+        if (token.isNotBlank()) {
+            csrfToken = token
+            cookieJar["__csrf"] = token
+            return token
+        }
+        runCatching { weapiRaw("/api/login/token/refresh", JSONObject().put("csrf_token", "")) }
+        val refreshed = cookieJar["__csrf"].orEmpty()
+        if (refreshed.isNotBlank()) csrfToken = refreshed
+        return refreshed
+    }
+
+    private fun weapiRaw(path: String, params: JSONObject, extraHeaders: Map<String, String> = emptyMap()): JSONObject {
+        val text = params.toString()
+        val secret = String(CharArray(16) { WEAPI_CHARS.random() })
+        val form = FormBody.Builder()
+            .add("params", weapiAes(weapiAes(text, WEAPI_PRESET_KEY), secret))
+            .add("encSecKey", weapiRsa(secret.reversed()))
+            .build()
+        val request = Request.Builder()
+            .url("https://music.163.com/weapi" + path.removePrefix("/api"))
+            .post(form)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+            .header("Referer", "https://music.163.com/")
+            .header("Cookie", cookieHeader())
+            .apply { extraHeaders.forEach { (name, value) -> header(name, value) } }
+            .build()
+        client.newCall(request).execute().use { response ->
+            rememberCookies(response)
+            require(response.isSuccessful) { "网易云请求失败（HTTP ${response.code}）" }
+            return JSONObject(response.body?.string().orEmpty().ifBlank { "{}" })
+        }
+    }
+
+    private fun weapiBlocking(path: String, params: JSONObject): JSONObject {
+        val token = csrf()
+        return weapiRaw(path, JSONObject(params.toString()).put("csrf_token", token))
+    }
+
+    private fun linuxBlocking(path: String, params: JSONObject): JSONObject {
+        val payload = JSONObject()
+            .put("method", "POST")
+            .put("url", "https://music.163.com$path")
+            .put("params", params)
+        val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec("rFgB&h#%2?^eDg:Q".toByteArray(Charsets.US_ASCII), "AES"))
+        val eparams = cipher.doFinal(payload.toString().toByteArray(Charsets.UTF_8)).joinToString("") { "%02X".format(it) }
+        val form = FormBody.Builder().add("eparams", eparams).build()
+        val request = Request.Builder()
+            .url("https://music.163.com/api/linux/forward")
+            .post(form)
+            .header("User-Agent", "linuxapi")
+            .header("Cookie", "os=linux; appver=1.2.1.0428; osver=Deepin 20.9; channel=netease" + (cookie?.let { "; MUSIC_U=$it" } ?: ""))
+            .build()
+        client.newCall(request).execute().use { response ->
+            rememberCookies(response)
+            require(response.isSuccessful) { "网易云请求失败（HTTP ${response.code}）" }
+            return JSONObject(response.body?.string().orEmpty().ifBlank { "{}" })
+        }
+    }
+
+    private fun plainBlocking(path: String, params: JSONObject, extraHeaders: Map<String, String> = emptyMap()): JSONObject {
+        val form = FormBody.Builder().apply { params.keys().forEach { add(it, params.optString(it)) } }.build()
+        val request = Request.Builder()
+            .url("https://music.163.com$path")
+            .post(form)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+            .header("Referer", "https://music.163.com/")
+            .header("Cookie", cookieHeader())
+            .apply { extraHeaders.forEach { (name, value) -> header(name, value) } }
+            .build()
+        client.newCall(request).execute().use { response ->
+            rememberCookies(response)
+            require(response.isSuccessful) { "网易云请求失败（HTTP ${response.code}）" }
+            return JSONObject(response.body?.string().orEmpty().ifBlank { "{}" })
+        }
+    }
+
+    private fun weapiAes(text: String, key: String): String {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key.toByteArray(Charsets.US_ASCII), "AES"), IvParameterSpec(WEAPI_IV))
+        return android.util.Base64.encodeToString(cipher.doFinal(text.toByteArray(Charsets.UTF_8)), android.util.Base64.NO_WRAP)
+    }
+
+    private fun weapiRsa(text: String): String {
+        val value = BigInteger(1, text.toByteArray(Charsets.US_ASCII))
+        return value.modPow(BigInteger(WEAPI_PUBLIC_EXPONENT, 16), BigInteger(WEAPI_MODULUS, 16)).toString(16).padStart(256, '0')
+    }
+
     private fun eapiBlocking(path: String, params: JSONObject, host: String = "https://interface3.music.163.com"): JSONObject {
+        seedJar()
         client.newCall(eapiRequest(path, params, host)).execute().use { response ->
+            rememberCookies(response)
             require(response.isSuccessful) { "网易云请求失败（HTTP ${response.code}）" }
             return JSONObject(response.body?.string().orEmpty().ifBlank { "{}" })
         }
@@ -1584,7 +1922,7 @@ class NeteaseClient(context: Context) {
             .put("resolution", "1080x2400")
             .put("requestId", "${now}_${(now % 1000).toString().padStart(4, '0')}")
             .put("channel", "xiaomi")
-            .put("__csrf", "")
+            .put("__csrf", csrfToken ?: cookieJar["__csrf"].orEmpty())
             .apply { cookie?.let { put("MUSIC_U", it) } }
         params.put("header", header.toString())
         val text = params.toString()
@@ -1593,16 +1931,17 @@ class NeteaseClient(context: Context) {
         val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(EAPI_KEY, "AES"))
         val encrypted = cipher.doFinal(payload.toByteArray(Charsets.UTF_8)).joinToString("") { "%02X".format(it) }
-        val cookieHeader = buildString {
+        val requestCookies = buildString {
             append("os=android; appver=$APP_VERSION; deviceId=$deviceId; channel=xiaomi")
             cookie?.let { append("; MUSIC_U=").append(it) }
+            cookieJar["NMTID"]?.let { append("; NMTID=").append(it) }
         }
         return Request.Builder()
             .url("$host/e" + path.removePrefix("/"))
             .post(FormBody.Builder().add("params", encrypted).build())
             .header("User-Agent", "NeteaseMusic/$APP_VERSION.240716 (Linux; Android 14)")
             .header("Referer", "https://music.163.com/")
-            .header("Cookie", cookieHeader)
+            .header("Cookie", requestCookies)
             .build()
     }
 
@@ -1627,10 +1966,17 @@ class NeteaseClient(context: Context) {
         private const val FIRST_BATCH = 60
         private const val REST_CHUNK = 200
         private const val KEY_MUSIC_U = "music_u"
+    private const val KEY_CSRF = "music_csrf"
         private const val KEY_ACCOUNT = "account"
         private const val KEY_DEVICE = "device_id"
         private const val APP_VERSION = "8.20.20"
         private val EAPI_KEY = "e82ckenh8dichen8".toByteArray(Charsets.US_ASCII)
+        private const val WEAPI_PRESET_KEY = "0CoJUm6Qyw8W8jud"
+        private val WEAPI_IV = "0102030405060708".toByteArray(Charsets.US_ASCII)
+        private const val WEAPI_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        private const val WEAPI_PUBLIC_EXPONENT = "010001"
+        private const val WEAPI_MODULUS =
+            "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7"
 
         val QUALITIES = listOf(
             "standard" to "标准（128k）",

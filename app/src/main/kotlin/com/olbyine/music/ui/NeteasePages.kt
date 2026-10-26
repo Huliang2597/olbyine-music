@@ -9,6 +9,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -38,6 +40,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.DoneAll
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.FileDownload
+import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Check
@@ -114,6 +123,8 @@ internal fun NeteaseOverlayHost(
     onPush: (NcmRoute) -> Unit,
     onPlay: (List<NeteaseSong>, Int, Boolean) -> Unit,
     onPauseMusic: () -> Unit = {},
+    onPlayNext: (List<NeteaseSong>) -> Unit = {},
+    onDownloadSong: (NeteaseSong) -> Unit = {},
 ) {
     val onPop: () -> Unit = { stack.pop() }
     PageStack(stack, backEnabled = backEnabled && stack.top !is NcmRoute.Web) { route ->
@@ -138,7 +149,11 @@ internal fun NeteaseOverlayHost(
                     onOpenArtist = { id, name -> onPush(NcmRoute.Artist(id, name)) },
                 )
                 is NcmRoute.Profile -> NeteaseProfileScreen(client, route.userId, onBack = onPop, onPush = onPush)
-                is NcmRoute.Collection -> NeteaseCollectionScreen(client, route.summary, currentTrackId, onBack = onPop, onPush = onPush, onPlay = onPlay)
+                is NcmRoute.Collection -> NeteaseCollectionScreen(
+                    client, route.summary, currentTrackId,
+                    onBack = onPop, onPush = onPush, onPlay = onPlay,
+                    onPlayNext = onPlayNext, onDownloadSong = onDownloadSong,
+                )
                 is NcmRoute.People -> NeteasePeopleScreen(client, route.userId, route.name, route.followers, onBack = onPop, onPush = onPush)
                 is NcmRoute.Ranking -> NeteaseRankingScreen(client, route.userId, currentTrackId, onBack = onPop, onPlay = { songs, index -> onPlay(songs, index, false) })
                 NcmRoute.SavedAlbums -> NeteaseSavedAlbumsScreen(client, onBack = onPop, onOpen = { onPush(NcmRoute.Collection(it)) })
@@ -162,8 +177,10 @@ internal fun NeteaseProfileScreen(client: NeteaseClient, userId: Long, onBack: (
     val user = profile.value
     var followed by remember(user) { mutableStateOf(user?.followed == true) }
     var busy by remember { mutableStateOf(false) }
+
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val downloadMany = LocalNeteaseDownloadMany.current
     val me = client.account.value?.userId
     val own = playlists.value.orEmpty().filter { it.own }
     val saved = playlists.value.orEmpty().filter { !it.own }
@@ -173,7 +190,7 @@ internal fun NeteaseProfileScreen(client: NeteaseClient, userId: Long, onBack: (
         columns = GridCells.Adaptive(140.dp),
         modifier = Modifier.fillMaxSize(),
         state = gridState,
-        contentPadding = PaddingValues(bottom = 32.dp),
+        contentPadding = PaddingValues(bottom = 32.dp + LocalOverlayMiniInset.current),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -212,31 +229,7 @@ internal fun NeteaseProfileScreen(client: NeteaseClient, userId: Long, onBack: (
                         }
                         Spacer(Modifier.height(12.dp))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (client.signedIn && me != user.userId) {
-                                PillButton(
-                                    if (followed) "已关注" else "关注",
-                                    {
-                                        if (!busy) {
-                                            busy = true
-                                            val target = !followed
-                                            followed = target
-                                            scope.launch {
-                                                try {
-                                                    client.setFollowUser(user.userId, target)
-                                                } catch (failure: Throwable) {
-                                                    if (failure is CancellationException) throw failure
-                                                    followed = !target
-                                                }
-                                                busy = false
-                                            }
-                                        }
-                                    },
-                                    icon = if (followed) Icons.Rounded.Check else Icons.Rounded.PersonAdd,
-                                    style = if (followed) PillStyle.TONAL else PillStyle.FILLED,
-                                    height = 38.dp,
-                                )
-                                PillButton("私信", { onPush(NcmRoute.Chat(NeteaseThread(user.userId, user.nickname, user.avatarUrl, "", 0, 0))) }, icon = Icons.Rounded.Mail, style = PillStyle.TONAL, height = 38.dp)
-                            }
+                            
                             if (user.artistId > 0) {
                                 PillButton("歌手主页", { onPush(NcmRoute.Artist(user.artistId, user.nickname)) }, icon = Icons.Rounded.Mic, style = PillStyle.TONAL, height = 38.dp)
                             }
@@ -342,6 +335,7 @@ internal fun NeteasePeopleScreen(client: NeteaseClient, userId: Long, name: Stri
     var error by remember(userId, followers) { mutableStateOf<String?>(null) }
     val following = remember(userId, followers) { mutableStateListOf<Long>() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val me = client.account.value?.userId
     val load: () -> Unit = {
         if (!loading && more) {
@@ -373,7 +367,7 @@ internal fun NeteasePeopleScreen(client: NeteaseClient, userId: Long, name: Stri
                 Text(name, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = 32.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = 32.dp + LocalOverlayMiniInset.current)) {
             itemsIndexed(people, key = { index, it -> "$index:${it.userId}" }) { index, person ->
                 if (index >= people.size - 6) LaunchedEffect(people.size) { load() }
                 Row(
@@ -391,8 +385,9 @@ internal fun NeteasePeopleScreen(client: NeteaseClient, userId: Long, name: Stri
                         PillButton(if (on) "已关注" else "关注", {
                             if (on) following.remove(person.userId) else following.add(person.userId)
                             scope.launch {
-                                runCatching { client.setFollowUser(person.userId, !on) }.onFailure {
+                                runCatching { client.setFollowUser(person.userId, !on) }.onFailure { failure ->
                                     if (on) following.add(person.userId) else following.remove(person.userId)
+                                    android.widget.Toast.makeText(context, failure.message ?: "操作失败", android.widget.Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }, style = if (on) PillStyle.TONAL else PillStyle.FILLED, height = 32.dp)
@@ -408,7 +403,11 @@ internal fun NeteasePeopleScreen(client: NeteaseClient, userId: Long, name: Stri
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+internal object NcmSelection {
+    var active by androidx.compose.runtime.mutableStateOf(false)
+}
+
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 internal fun NeteaseCollectionScreen(
     client: NeteaseClient,
@@ -417,6 +416,8 @@ internal fun NeteaseCollectionScreen(
     onBack: () -> Unit,
     onPush: (NcmRoute) -> Unit,
     onPlay: (List<NeteaseSong>, Int, Boolean) -> Unit,
+    onPlayNext: (List<NeteaseSong>) -> Unit = {},
+    onDownloadSong: (NeteaseSong) -> Unit = {},
 ) {
     val (loaded, retry) = rememberLoadStream(target.id, target.kind) { client.collectionStream(target) }
     val data = loaded.value
@@ -428,13 +429,32 @@ internal fun NeteaseCollectionScreen(
     val colors = MaterialTheme.colorScheme
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val downloadMany = LocalNeteaseDownloadMany.current
     var saved by remember(target.id) { mutableStateOf<Boolean?>(null) }
+    var selecting by remember(target.id) { mutableStateOf(false) }
+    val chosen = remember(target.id) { mutableStateListOf<Long>() }
+    var savePicker by remember(target.id) { mutableStateOf(false) }
+    androidx.compose.runtime.DisposableEffect(selecting) {
+        NcmSelection.active = selecting
+        onDispose { if (selecting) NcmSelection.active = false }
+    }
+    androidx.compose.runtime.DisposableEffect(target.id) {
+        SongSelectionHook.start = { selecting = true; chosen.clear() }
+        onDispose { if (SongSelectionHook.start != null) SongSelectionHook.start = null }
+    }
+    LaunchedEffect(target.id, target.kind, client.signedIn) {
+        if (target.kind == NeteaseCollectionKind.ALBUM && client.signedIn && saved == null) {
+            client.albumSaved(target.id)?.let { if (saved == null) saved = it }
+        }
+    }
     val resumeKey = collectionKey(summary.kind.name, summary.id)
     val scopedPlay = LocalPlayNeteaseCollection.current
     val play: (Int, Boolean) -> Unit = { index, shuffle ->
         if (scopedPlay != null) scopedPlay(resumeKey, songs, index, shuffle, 0L) else onPlay(songs, index, shuffle)
     }
-    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 32.dp)) {
+    Box(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 32.dp + LocalOverlayMiniInset.current)) {
         item(key = "head") {
             Box(Modifier.fillMaxWidth().clipToBounds()) {
                 Box(Modifier.fillMaxWidth().height(300.dp).parallaxHeader(listState)) {
@@ -446,7 +466,17 @@ internal fun NeteaseCollectionScreen(
                 }
                 Column(Modifier.statusBarsPadding().padding(horizontal = 10.dp)) {
                     Spacer(Modifier.height(10.dp))
-                    OlbyineIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "返回", onBack, size = 40.dp, iconSize = 20.dp)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        OlbyineIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "返回", onBack, size = 40.dp, iconSize = 20.dp)
+                        Spacer(Modifier.weight(1f))
+                        PillButton(
+                            if (selecting) "完成" else "多选",
+                            { selecting = !selecting; chosen.clear() },
+                            icon = Icons.Rounded.DoneAll,
+                            style = if (selecting) PillStyle.FILLED else PillStyle.TONAL,
+                            height = 36.dp,
+                        )
+                    }
                     Spacer(Modifier.height(14.dp))
                     Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         UrlImage(
@@ -516,7 +546,7 @@ internal fun NeteaseCollectionScreen(
                         PillButton("随机播放", { if (songs.isNotEmpty()) play(0, true) }, icon = Icons.Rounded.Shuffle, style = PillStyle.TONAL, enabled = songs.isNotEmpty(), height = 40.dp)
                         Spacer(Modifier.weight(1f))
                         if (client.signedIn && (summary.kind == NeteaseCollectionKind.ALBUM || (summary.kind == NeteaseCollectionKind.PLAYLIST && !summary.own))) {
-                            val on = saved == true
+                            val on = (saved ?: data?.saved) == true
                             OlbyineIconButton(
                                 if (on) Icons.Rounded.Check else Icons.Rounded.LibraryAdd,
                                 if (on) "取消收藏" else "收藏",
@@ -550,17 +580,152 @@ internal fun NeteaseCollectionScreen(
         if (data == null && loaded.loading) skeletonRows(10)
         else if (data == null) item(key = "state") { LoadingOrError(false, loaded.error, retry, itemMotion()) }
         else if (songs.isEmpty() && query.isNotBlank()) item(key = "none") {
-            Text("没有找到「」", itemMotion().fillMaxWidth().padding(24.dp), color = colors.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text("没有找到「$query」", itemMotion().fillMaxWidth().padding(24.dp), color = colors.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
         itemsIndexed(songs, key = { index, it -> "$index:${it.id}" }) { index, song ->
             Box(itemMotion().padding(horizontal = 10.dp)) {
-                NeteaseSongRow(song, current = currentTrackId == NeteaseSong.trackId(song.id)) { play(index, false) }
+                NeteaseSongRow(song, current = currentTrackId == NeteaseSong.trackId(song.id)) {
+                    if (selecting) { if (!chosen.remove(song.id)) chosen += song.id } else play(index, false)
+                }
+                if (selecting) {
+                    val picked = song.id in chosen
+                    Box(
+                        Modifier.matchParentSize().clip(RoundedCornerShape(12.dp))
+                            .background(if (picked) PageRed.copy(alpha = .18f) else Color.Transparent),
+                    )
+                }
             }
         }
         if (data != null && !data.complete) item(key = "more") {
             Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
         }
         item(key = "bottom") { Spacer(Modifier.navigationBarsPadding()) }
+    }
+    androidx.compose.animation.AnimatedVisibility(
+        visible = selecting,
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it },
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it },
+        modifier = Modifier.align(Alignment.BottomCenter),
+    ) {
+        SongSelectionBar(
+            count = chosen.size,
+            total = songs.size,
+            removable = summary.own && summary.kind != NeteaseCollectionKind.ARTIST,
+            onSelectAll = {
+                if (chosen.size == songs.size) chosen.clear() else { chosen.clear(); songs.forEach { chosen += it.id } }
+            },
+            onClose = { selecting = false; chosen.clear() },
+            onPlayNext = {
+                val picked = songs.filter { it.id in chosen }
+                if (picked.isNotEmpty()) { onPlayNext(picked); selecting = false; chosen.clear() }
+            },
+            onSave = { if (chosen.isNotEmpty()) savePicker = true },
+            onDownload = {
+                val picked = songs.filter { it.id in chosen }
+                if (downloadMany != null) downloadMany(picked) else picked.forEach(onDownloadSong)
+                selecting = false
+                chosen.clear()
+            },
+            onRemove = {
+                val ids = songs.filter { it.id in chosen }.map { it.id }
+                if (ids.isNotEmpty()) {
+                    scope.launch {
+                        runCatching { client.removeFromPlaylist(target.id, ids) }
+                            .onSuccess { retry() }
+                            .onFailure { android.widget.Toast.makeText(context, it.message ?: "移除失败", android.widget.Toast.LENGTH_SHORT).show() }
+                        selecting = false
+                        chosen.clear()
+                    }
+                }
+            },
+            modifier = Modifier.navigationBarsPadding().padding(bottom = 14.dp),
+        )
+    }
+    }
+    if (savePicker) {
+        val (lists, _) = rememberLoad(Unit) { client.playlists() }
+        GlassBottomSheet(onDismissRequest = { savePicker = false }) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+            Text("收藏到歌单", Modifier.padding(20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            lists.value.orEmpty().filter { it.own || true }.forEach { playlist ->
+                PickerRow(
+                    leading = {
+                        UrlImage(playlist.coverUrl, Modifier.size(44.dp).clip(RoundedCornerShape(10.dp))) {
+                            Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)))
+                        }
+                    },
+                    title = playlist.name,
+                    subtitle = "${playlist.trackCount} 首",
+                    onClick = {
+                        savePicker = false
+                        val ids = songs.filter { it.id in chosen }.map { it.id }
+                        scope.launch {
+                            runCatching { client.addToPlaylist(playlist.id, ids) }
+                                .onSuccess { android.widget.Toast.makeText(context, "已加入「${playlist.name}」", android.widget.Toast.LENGTH_SHORT).show() }
+                                .onFailure { android.widget.Toast.makeText(context, it.message ?: "收藏失败", android.widget.Toast.LENGTH_SHORT).show() }
+                            selecting = false
+                            chosen.clear()
+                        }
+                    },
+                )
+            }
+            Spacer(Modifier.navigationBarsPadding().height(12.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun BarAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+) {
+    val tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = .35f)
+    Column(
+        Modifier.clip(RoundedCornerShape(14.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        StyledIcon(icon, label, Modifier.size(20.dp), tint = tint)
+        Spacer(Modifier.height(2.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
+    }
+}
+
+@Composable
+internal fun SongSelectionBar(
+    count: Int,
+    total: Int,
+    removable: Boolean,
+    onSelectAll: () -> Unit,
+    onClose: () -> Unit,
+    onPlayNext: () -> Unit,
+    onSave: () -> Unit,
+    onDownload: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier.fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(24.dp))
+            .background(colors.surfaceContainerHigh).padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        BarAction(Icons.Rounded.Close, "退出", onClose)
+        Text(
+            "已选 $count 首",
+            Modifier.padding(horizontal = 6.dp).weight(1f),
+            style = MaterialTheme.typography.labelMedium,
+        )
+        BarAction(Icons.Rounded.SelectAll, if (count == total && total > 0) "取消全选" else "全选", onSelectAll)
+        BarAction(Icons.AutoMirrored.Rounded.PlaylistPlay, "下一首", onPlayNext, enabled = count > 0)
+        BarAction(Icons.AutoMirrored.Rounded.PlaylistAdd, "收藏歌单", onSave, enabled = count > 0)
+        BarAction(Icons.Rounded.FileDownload, "下载", onDownload, enabled = count > 0)
+        if (removable) BarAction(Icons.Rounded.Delete, "移除", onRemove, enabled = count > 0)
     }
 }
 

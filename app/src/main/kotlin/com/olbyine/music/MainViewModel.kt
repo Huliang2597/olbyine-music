@@ -811,7 +811,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setLyricMvStyle(value: String) = settingsRepository.setLyricMvStyle(value)
     fun setShowSourceSwitch(value: Boolean) = settingsRepository.setShowSourceSwitch(value)
 
-    fun setFloatingCoverButton(value: Boolean) = settingsRepository.setFloatingCoverButton(value)
 
     fun setBackgroundStyle(value: String) = settingsRepository.setBackgroundStyle(value)
     fun setLayoutMode(value: String) = settingsRepository.setLayoutMode(value)
@@ -2221,6 +2220,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         playTracks(tracks, index)
     }
 
+    private fun cacheDirectories(): List<File> {
+        val app = getApplication<Application>()
+        return listOf(
+            File(app.cacheDir, "external-covers"),
+            File(app.cacheDir, "ncm-lists"),
+            File(app.filesDir, "meta"),
+            File(app.filesDir, "nim"),
+        )
+    }
+
+    private fun readableSize(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val units = listOf("KB", "MB", "GB")
+        var value = bytes / 1024.0
+        var index = 0
+        while (value >= 1024 && index < units.lastIndex) {
+            value /= 1024
+            index++
+        }
+        return "%.1f %s".format(value, units[index])
+    }
+
+    suspend fun cacheUsageBytes(): Long = withContext(Dispatchers.IO) {
+        val motion = runCatching { (getApplication<Application>() as OlbyineApplication).motionCache.cacheSpace }.getOrDefault(0L)
+        motion + cacheDirectories().sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
+    }
+
+    fun clearCaches() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val motionFreed = runCatching {
+                val cache = (getApplication<Application>() as OlbyineApplication).motionCache
+                val before = cache.cacheSpace
+                cache.keys.toList().forEach { key -> runCatching { cache.removeResource(key) } }
+                (before - cache.cacheSpace).coerceAtLeast(0L)
+            }.getOrDefault(0L)
+            var freed = motionFreed
+            cacheDirectories().forEach { dir ->
+                freed += dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                runCatching { dir.deleteRecursively() }
+            }
+            val text = if (freed > 0L) "已清理 ${readableSize(freed)} 缓存" else "没有需要清理的缓存"
+            withContext(Dispatchers.Main) { message.value = text }
+        }
+    }
+
     fun rescanLibraryTags() {
         if (importing.value) return
         viewModelScope.launch {
@@ -2368,7 +2412,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val composerRequest: StateFlow<String?> = _composerRequest
 
     fun openComposerOf(track: Track) {
-        val composer = track.composer?.trim().orEmpty()
+        openComposerNamed(com.olbyine.music.data.ComposerTags.split(track.composer).firstOrNull().orEmpty())
+    }
+
+    fun openComposerNamed(name: String) {
+        val composer = name.trim()
         if (composer.isEmpty()) {
             message.value = "这首歌没有作曲人信息"
             return
@@ -2806,6 +2854,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         source: String? = null,
         startMs: Long = 0L,
     ) = playNeteaseQueue(songs, index, shuffle, source, startMs, openPlayer = true, guardCurrent = true)
+
 
     private fun playNeteaseQueue(
         songs: List<com.olbyine.music.data.NeteaseSong>,

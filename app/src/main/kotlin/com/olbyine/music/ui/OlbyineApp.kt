@@ -171,6 +171,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val dockSource = rememberBackdropSource()
+    val overlaySource = rememberBackdropSource()
     var lyricTargetId by remember { mutableStateOf<String?>(null) }
     var afterNotificationPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
 
@@ -458,67 +459,33 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     var rootSize by remember { mutableStateOf(IntSize.Zero) }
     var miniBounds by remember { mutableStateOf<Rect?>(null) }
     var miniArtBounds by remember { mutableStateOf<Rect?>(null) }
-    var floatCoverMounted by remember { mutableStateOf(false) }
-    val floatCoverBoundsHolder = remember { arrayOfNulls<Rect>(1) }
-    var frozenDockInset by remember { mutableIntStateOf(0) }
     var dockHeightPx by remember { mutableIntStateOf(0) }
-    var returnSettled by remember { mutableStateOf(true) }
-    var exitToFloating by remember { mutableStateOf(false) }
-    val collapse = remember { androidx.compose.animation.core.Animatable(0f) }
-    val floatActive = !ncmStack.isEmpty && state.settings.floatingCoverButton
-    val floatShown = floatActive && !playerOpen && sheet.value < 0.01f
-    androidx.compose.runtime.LaunchedEffect(floatShown) {
-        if (floatShown) {
-            floatCoverMounted = true
-            returnSettled = false
-            frozenDockInset = dockHeightPx
-            if (exitToFloating) {
-                collapse.snapTo(1f)
-                exitToFloating = false
-            } else {
-                animateCollapseSteps(collapse, 1f, 340, CollapseEaseIn)
-            }
-        } else if (!floatActive) {
-            floatCoverMounted = false
-            exitToFloating = false
-            if (collapse.value > 0.02f) {
-                animateCollapseSteps(collapse, 0f, 300, CollapseEaseOut)
-            } else {
-                collapse.snapTo(0f)
-            }
-            returnSettled = true
-        } else if (exitToFloating) {
-            returnSettled = false
-        } else {
-            if (collapse.value > 0.001f) {
-                animateCollapseSteps(collapse, 0f, 300, CollapseEaseOut)
-            }
-            returnSettled = true
+    val overlayMiniMove = remember { androidx.compose.animation.core.Animatable(0f) }
+    var overlayHandoff by remember { mutableStateOf(false) }
+    val overlayOnScreen = ncmStack.entries.isNotEmpty() || webDavOpen
+    val overlayMiniSuppress = overlayOnScreen || overlayMiniMove.value > 0.002f
+    LaunchedEffect(overlayMiniSuppress) {
+        if (overlayMiniSuppress) {
+            overlayHandoff = true
+        } else if (overlayHandoff) {
+            kotlinx.coroutines.delay(320L)
+            overlayHandoff = false
         }
     }
-    val collapseProxy: () -> Float = { collapse.value }
-    val miniHiddenByCollapse by remember { androidx.compose.runtime.derivedStateOf { state.settings.floatingCoverButton && (collapse.value > 0.06f || exitToFloating) } }
-    val floatInsetNow by remember { androidx.compose.runtime.derivedStateOf { if (collapse.value <= 0.004f) dockHeightPx else frozenDockInset } }
-    val floatProgressProxy: () -> Float = {
-        if (exitToFloating) {
-            if (playerOpen || sheet.value > 0.008f) 0f else 1f
-        } else collapse.value
-    }
-    val collapseSettled: () -> Boolean = { collapse.value < 0.02f }
     val miniArtBoundsProxy: (Rect) -> Unit = { bounds ->
-        if (sheet.value < 0.001f && !sheet.dragging && collapse.value < 0.02f) miniArtBounds = bounds
+        if (sheet.value < 0.001f && !sheet.dragging) miniArtBounds = bounds
     }
     var launchBounds by remember { mutableStateOf<Rect?>(null) }
     var baseDestination by rememberSaveable {
         mutableStateOf(if (state.destination == AppDestination.NOW_PLAYING) AppDestination.LIBRARY else state.destination)
     }
-    val miniHidden = baseDestination == AppDestination.SETTINGS || playerState.currentTrack == null
+    val navBottomPx = WindowInsets.navigationBars.getBottom(density)
     val collapsedBounds: () -> Rect = {
-        (if (exitToFloating) floatCoverBoundsHolder[0] else null) ?: launchBounds ?: if (miniHidden && rootSize.height > 0) with(density) {
-            val width = rootSize.width.toFloat()
-            val top = rootSize.height.toFloat() + 12.dp.toPx()
-            Rect(12.dp.toPx(), top, width - 12.dp.toPx(), top + 66.dp.toPx())
-        } else miniBounds ?: with(density) {
+        launchBounds ?: miniBounds?.let { box ->
+            val shift = box.center.x - rootSize.width / 2f
+            val offset = -shift * overlayMiniMove.value
+            Rect(box.left + offset, box.top, box.right + offset, box.bottom)
+        } ?: with(density) {
             val width = rootSize.width.toFloat()
             val height = rootSize.height.toFloat().coerceAtLeast(1f)
             val bottom = height - dockHeightPx.coerceAtLeast(96.dp.roundToPx()) + 84.dp.toPx()
@@ -533,19 +500,13 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         if (state.libraryLoaded && neteaseSignedIn) viewModel.startComposerEnrichment()
     }
     LaunchedEffect(playerOpen) {
-        if (playerOpen && sheet.value < .01f && !sheet.dragging) {
-            val floating = if (floatActive && collapse.value > .05f) floatCoverBoundsHolder[0] else null
-            if (floating != null) {
-                launchBounds = floating
-                exitToFloating = true
-            } else if (launchBounds == null) {
-                val pressed = AppTouchOrigin.bounds?.takeIf {
-                    android.os.SystemClock.uptimeMillis() - AppTouchOrigin.boundsAt < 3_000 && it.width > 4f && it.height > 4f
-                }
-                val mini = miniBounds
-                if (pressed != null && (mini == null || !pressed.overlaps(mini)) && pressed.top < rootSize.height - dockHeightPx) {
-                    launchBounds = pressed
-                }
+        if (playerOpen && sheet.value < .01f && !sheet.dragging && launchBounds == null) {
+            val pressed = AppTouchOrigin.bounds?.takeIf {
+                android.os.SystemClock.uptimeMillis() - AppTouchOrigin.boundsAt < 3_000 && it.width > 4f && it.height > 4f
+            }
+            val mini = miniBounds
+            if (pressed != null && (mini == null || !pressed.overlaps(mini)) && pressed.top < rootSize.height - dockHeightPx) {
+                launchBounds = pressed
             }
         }
         val target = if (playerOpen) 1f else 0f
@@ -627,6 +588,23 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         }
     }
 
+    val overlayMiniOpen = overlayOnScreen && playerState.currentTrack != null
+    LaunchedEffect(overlayMiniOpen) {
+        val target = if (overlayMiniOpen) 1f else 0f
+        val from = overlayMiniMove.value
+        if (kotlin.math.abs(from - target) > 0.002f) {
+            val durationMs = if (target > from) 320 else 260
+            val startNs = System.nanoTime()
+            var elapsed = 0L
+            while (elapsed < durationMs) {
+                val step = OlbyineTokens.Motion.easeOut.transform((elapsed.toFloat() / durationMs).coerceIn(0f, 1f))
+                overlayMiniMove.snapTo(from + (target - from) * step)
+                kotlinx.coroutines.delay(8L)
+                elapsed = (System.nanoTime() - startNs) / 1_000_000L
+            }
+        }
+        overlayMiniMove.snapTo(target)
+    }
     val miniDrag: (Float) -> Unit = { deltaY ->
         sheet.drag((sheet.value - deltaY / collapsedBounds().top.coerceAtLeast(1f)).coerceIn(0f, 1f))
     }
@@ -666,7 +644,11 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 modifier = Modifier.fillMaxSize(),
                 containerColor = MaterialTheme.colorScheme.background,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
-                bottomBar = { CompositionLocalProvider(LocalOnGlass provides true) {
+                bottomBar = { androidx.compose.animation.AnimatedVisibility(
+                    visible = !(NcmSelection.active && !appLayout.tablet),
+                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it },
+                    exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it },
+                ) { CompositionLocalProvider(LocalOnGlass provides true) {
                     BottomDock(
                         state = playerState,
                         selected = baseDestination,
@@ -674,9 +656,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                         lyric = miniLyric,
                         lyricClock = miniClock,
                         modifier = Modifier.onSizeChanged { dockHeightPx = it.height },
-                        onMiniBounds = { bounds ->
-                            if (sheet.value < 0.001f && !sheet.dragging && collapse.value < 0.02f) miniBounds = bounds
-                        },
+                        onMiniBounds = { bounds -> miniBounds = bounds },
                         onOpenPlayer = { viewModel.navigateTo(AppDestination.NOW_PLAYING) },
                         onToggle = togglePlay,
                         onNext = skipNext,
@@ -688,11 +668,11 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                         onSelect = viewModel::navigateTo,
                         tablet = appLayout.tablet,
                         startInset = appLayout.sidebarWidth,
-                        miniHidden = miniHiddenByCollapse,
-                        instantMini = state.settings.floatingCoverButton && floatCoverMounted,
+                        miniSuppressed = overlayMiniSuppress,
+                        instantMini = overlayHandoff,
                         onMiniArtBounds = miniArtBoundsProxy,
                     )
-                } },
+                } } },
             ) { scaffoldPadding ->
                 val customBackground = state.settings.customBackgroundPath
                 val artworkBackdrop = playerCoverPath?.takeIf { state.settings.artworkBackdrop && customBackground == null }
@@ -784,6 +764,10 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             },
                             LocalPlayNextTrack provides { track -> runPlaybackAction { viewModel.playNext(listOf(track)) } },
                             LocalNeteaseDownload provides { song -> downloadTarget = song },
+                            LocalNeteaseDownloadMany provides { songs ->
+                                val level = playerState.settings.neteaseDownloadQuality
+                                songs.forEach { viewModel.downloadNeteaseSong(it, level) }
+                            },
                             LocalDownloadTrack provides { track -> downloadTarget = neteaseSongOf(track) },
                             LocalNeteaseDownloads provides neteaseDownloads,
                             LocalSearchSoundCloud provides searchSoundCloud,
@@ -998,6 +982,10 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 LocalActiveCollection provides activeCollection,
                 LocalIsPlaying provides { playerState.playback.isPlaying },
             ) {
+                Box(Modifier.fillMaxSize().backdropSource(overlaySource)) {
+                CompositionLocalProvider(
+                    LocalOverlayMiniInset provides if (overlayOnScreen) MiniHeight + 20.dp + with(density) { navBottomPx.toDp() } else 0.dp,
+                ) {
                 NeteaseOverlayHost(
                     stack = ncmStack,
                     client = viewModel.neteaseClient,
@@ -1005,9 +993,64 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                     backEnabled = !playerOpen,
                     onPush = pushNcm,
                     onPlay = { songs, index, shuffle -> runPlaybackAction { viewModel.playNeteaseSongs(songs, index, shuffle) } },
+                    onPlayNext = { songs ->
+                        runPlaybackAction { viewModel.playNext(songs.map { it.toTrack() }) }
+                    },
+                    onDownloadSong = { song ->
+                        val level = playerState.settings.neteaseDownloadQuality
+                        viewModel.downloadNeteaseSong(song, level)
+                    },
                 )
+                }
+                }
+                val globalMiniTrack = playerState.currentTrack
+                if (globalMiniTrack != null && !playerOpen && !NcmSelection.active) {
+                    val slot = miniBounds
+                    val slotTop = slot?.top ?: (rootSize.height - dockHeightPx + with(density) { 6.dp.toPx() })
+                    val dockCenterX = slot?.center?.x ?: (rootSize.width / 2f)
+                    val overlayTopY = rootSize.height - navBottomPx - with(density) { 10.dp.toPx() + MiniHeight.toPx() }
+                    CompositionLocalProvider(LocalOnGlass provides true) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopStart)
+                                .fillMaxWidth()
+                                .offset { androidx.compose.ui.unit.IntOffset(0, slotTop.toInt()) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                MiniPlayer(
+                                    track = globalMiniTrack,
+                                    playback = playerState.playback,
+                                    lyric = miniLyric.value,
+                                    lyricClock = miniClock,
+                                    source = if (!ncmStack.isEmpty && overlayMiniMove.value > 0.99f) overlaySource else dockSource,
+                                    style = miniPlayerStyle(playerState.settings.liquidGlassEnabled && LocalStyleSpec.current.dock == DockKind.FLOATING_GLASS),
+                                    modifier = (if (appLayout.tablet) Modifier.widthIn(max = 600.dp) else Modifier.fillMaxWidth())
+                                        .graphicsLayer {
+                                        val remaining = 1f - overlayMiniMove.value
+                                        translationX = (dockCenterX - rootSize.width / 2f) * remaining
+                                        translationY = (overlayTopY - slotTop) * overlayMiniMove.value
+                                    },
+                                    onOpen = { viewModel.navigateTo(AppDestination.NOW_PLAYING) },
+                                    onToggle = togglePlay,
+                                    onNext = skipNext,
+                                    onPrevious = skipPrevious,
+                                    onDragStart = { sheet.drag(sheet.value) },
+                                    onDrag = miniDrag,
+                                    onDragStop = miniDragStop,
+                                    onDragCancel = { sheet.settle(if (playerOpen) 1f else 0f) },
+                                    onArtBounds = miniArtBoundsProxy,
+                                )
+                            }
+                        }
+                    }
+                }
+
             }
-            GlassPopupLayer(basePopups, dockSource, popupGlassStyle(state.settings.glassPopups))
+            GlassPopupLayer(basePopups, if (overlayOnScreen) overlaySource else dockSource, popupGlassStyle(state.settings.glassPopups))
         }
 
         if (sheetComposed) {
@@ -1142,6 +1185,21 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onLyrics = { setPage(1) },
                             onInfo = { setPage(-1) },
                             onFavorite = { state.currentTrack?.let(viewModel::toggleFavorite) },
+                            onComposer = { chosen ->
+                                val current = state.currentTrack
+                                if (current != null) {
+                                    val name = chosen?.trim().orEmpty().ifEmpty { current.artist.trim() }
+                                    if (name.isNotEmpty()) {
+                                        val isComposer = current.composerNames().any { it.equals(name, ignoreCase = true) }
+                                        when {
+                                            isComposer -> viewModel.openComposerNamed(name)
+                                            current.id.startsWith("ncm:") ->
+                                                appScope.launch { openArtist(viewModel.neteaseArtistIdFor(current, name), name) }
+                                            else -> openArtist(null, name)
+                                        }
+                                    }
+                                }
+                            },
                             onPlayMode = onPlayMode,
                             onSpeed = viewModel::setPlaybackSpeed,
                             onSearchLyrics = { source -> viewModel.searchOnlineLyrics(state.currentTrack, source) },
@@ -1393,29 +1451,6 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                 }
             } }
         }
-        val floatingTrack = playerState.currentTrack
-        val floatingVisible = floatShown
-        val floatingGlassStyle = miniPlayerStyle(playerState.settings.liquidGlassEnabled && LocalStyleSpec.current.dock == DockKind.FLOATING_GLASS)
-        if (floatingTrack != null && !playerOpen && (floatingVisible || floatCoverMounted)) {
-            FloatingCoverButton(
-                track = floatingTrack,
-                playing = playerState.playback.isPlaying,
-                miniBounds = miniBounds,
-                dockArtBounds = miniArtBounds,
-                startBounds = if (exitToFloating) floatCoverBoundsHolder[0] else null,
-                progress = floatProgressProxy,
-                source = dockSource,
-                style = floatingGlassStyle,
-                onBounds = { bounds -> floatCoverBoundsHolder[0] = bounds },
-                onOpen = {
-                    launchBounds = floatCoverBoundsHolder[0] ?: miniArtBounds
-                    exitToFloating = true
-                    viewModel.navigateTo(AppDestination.NOW_PLAYING)
-                },
-                bottomInsetPx = floatInsetNow,
-            )
-        }
-
         scCommentsFor?.let { (id, title) ->
             ScCommentsSheet(viewModel.soundCloud, id, title, onDismiss = { scCommentsFor = null }, positionMs = {
                 if (playerState.currentTrack?.id == "sc:$id") playerState.playback.estimatedPosition() else 0L
@@ -1765,7 +1800,7 @@ private fun BottomDock(
     onSelect: (AppDestination) -> Unit,
     tablet: Boolean = false,
     startInset: androidx.compose.ui.unit.Dp = 0.dp,
-    miniHidden: Boolean = false,
+    miniSuppressed: Boolean = false,
     instantMini: Boolean = false,
     onMiniArtBounds: (Rect) -> Unit = {},
 ) {
@@ -1774,42 +1809,20 @@ private fun BottomDock(
     val density = LocalDensity.current
     val navBottom = WindowInsets.navigationBars.getBottom(density)
     val bottomPadding = if (navBottom > 0) with(density) { navBottom.toDp() } + 6.dp else 10.dp
-    val showMini = state.currentTrack != null && (tablet || selected != AppDestination.SETTINGS) && !miniHidden
+    val showMini = state.currentTrack != null && !miniSuppressed
     Column(
         modifier.fillMaxWidth().padding(start = startInset),
         verticalArrangement = Arrangement.spacedBy(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AnimatedVisibility(
-            visible = showMini,
-            enter = if (instantMini) androidx.compose.animation.EnterTransition.None else fadeIn(tween(OlbyineTokens.Motion.standardMs, easing = OlbyineTokens.Motion.easeOut)) +
-                slideInVertically(appleSpring(response = .32f, damping = .9f)) { it / 2 } +
-                scaleIn(appleSpring(response = .32f), initialScale = .9f, transformOrigin = TransformOrigin(.5f, 1f)),
-            exit = fadeOut(tween(OlbyineTokens.Motion.quickMs, easing = OlbyineTokens.Motion.easeOut)) +
-                slideOutVertically(tween(OlbyineTokens.Motion.standardMs, easing = OlbyineTokens.Motion.easeOut)) { it / 2 } +
-                scaleOut(tween(OlbyineTokens.Motion.standardMs, easing = OlbyineTokens.Motion.easeOut), targetScale = .9f, transformOrigin = TransformOrigin(.5f, 1f)),
-        ) {
-            val track = state.currentTrack ?: return@AnimatedVisibility
-            MiniPlayer(
-                track = track,
-                playback = state.playback,
-                lyric = lyric.value,
-                lyricClock = lyricClock,
-                source = source,
-                 style = miniPlayerStyle(liquid && spec.dock == DockKind.FLOATING_GLASS),
-                modifier = Modifier
+        if (state.currentTrack != null) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
                     .then(if (tablet) Modifier.widthIn(max = 600.dp) else Modifier)
                     .padding(start = 12.dp, end = 12.dp, top = 6.dp)
+                    .height(MiniHeight)
                     .onGloballyPositioned { onMiniBounds(it.boundsInRoot()) },
-                onOpen = onOpenPlayer,
-                onToggle = onToggle,
-                onNext = onNext,
-                onPrevious = onPrevious,
-                onDragStart = onDragStart,
-                onDrag = onDrag,
-                onDragStop = onDragStop,
-                onDragCancel = onDragCancel,
-                onArtBounds = onMiniArtBounds,
             )
         }
         if (tablet) {
@@ -1999,6 +2012,9 @@ internal fun tabSwitch(direction: Int, material: Boolean, reduce: Boolean): andr
                 slideOutHorizontally(glide) { width -> -direction * width / 14 },
         )
 }
+
+private val CollapseEaseIn = androidx.compose.animation.core.CubicBezierEasing(0.32f, 0f, 0.18f, 1f)
+private val CollapseEaseOut = androidx.compose.animation.core.CubicBezierEasing(0.36f, 0f, 0.16f, 1f)
 
 internal val MiniCorner = 22.dp
 internal val MiniHeight = 58.dp
@@ -2531,27 +2547,3 @@ private fun neteaseSongOf(track: Track): com.olbyine.music.data.NeteaseSong? {
     )
 }
 
-private val CollapseEaseIn = androidx.compose.animation.core.CubicBezierEasing(0.32f, 0f, 0.18f, 1f)
-private val CollapseEaseOut = androidx.compose.animation.core.CubicBezierEasing(0.36f, 0f, 0.16f, 1f)
-
-private suspend fun animateCollapseSteps(
-    anim: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>,
-    target: Float,
-    durationMs: Int,
-    easing: androidx.compose.animation.core.Easing,
-) {
-    val from = anim.value
-    if (kotlin.math.abs(from - target) < 0.002f) {
-        anim.snapTo(target)
-        return
-    }
-    val startNs = System.nanoTime()
-    var elapsed = 0L
-    while (elapsed < durationMs) {
-        val progress = easing.transform((elapsed.toFloat() / durationMs).coerceIn(0f, 1f))
-        anim.snapTo(from + (target - from) * progress)
-        kotlinx.coroutines.delay(8L)
-        elapsed = (System.nanoTime() - startNs) / 1_000_000L
-    }
-    anim.snapTo(target)
-}

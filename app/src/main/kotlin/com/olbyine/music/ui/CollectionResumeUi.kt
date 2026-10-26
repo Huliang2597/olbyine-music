@@ -28,6 +28,7 @@ import com.olbyine.music.data.NeteaseSong
 internal val LocalPlayNextTrack = staticCompositionLocalOf<((com.olbyine.music.data.Track) -> Unit)?> { null }
 
 internal val LocalNeteaseDownload = staticCompositionLocalOf<((com.olbyine.music.data.NeteaseSong) -> Unit)?> { null }
+internal val LocalNeteaseDownloadMany = staticCompositionLocalOf<((List<com.olbyine.music.data.NeteaseSong>) -> Unit)?> { null }
 
 internal val LocalDownloadTrack = staticCompositionLocalOf<((com.olbyine.music.data.Track) -> Unit)?> { null }
 

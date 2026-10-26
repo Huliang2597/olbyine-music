@@ -112,7 +112,7 @@ internal fun NeteaseRankingScreen(
     val rows = state.value.orEmpty()
     val songs = remember(rows) { rows.map { it.first } }
     val top = rows.firstOrNull()?.second?.coerceAtLeast(1) ?: 1
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp + LocalOverlayMiniInset.current)) {
         item(key = "head") {
             Column {
                 ExtrasHeader("听歌排行", "按播放次数排列", onBack) {
@@ -172,7 +172,7 @@ internal fun NeteaseSavedAlbumsScreen(client: NeteaseClient, onBack: () -> Unit,
     LazyVerticalGrid(
         columns = GridCells.Adaptive(150.dp),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = 32.dp),
+        contentPadding = PaddingValues(start = 10.dp, end = 10.dp, bottom = 32.dp + LocalOverlayMiniInset.current),
         verticalArrangement = Arrangement.spacedBy(6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -242,7 +242,7 @@ private fun PodcastRow(podcast: NeteaseClient.Podcast, onClick: () -> Unit, modi
 internal fun NeteasePodcastsScreen(client: NeteaseClient, onBack: () -> Unit, onOpen: (NeteaseClient.Podcast) -> Unit) {
     val (mine, _) = rememberLoad(client.signedIn) { client.subscribedPodcasts() }
     val (hot, retry) = rememberLoad(Unit) { client.hotPodcasts() }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 4.dp, end = 4.dp, bottom = 32.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 4.dp, end = 4.dp, bottom = 32.dp + LocalOverlayMiniInset.current)) {
         item(key = "head") { ExtrasHeader("播客", "订阅的电台和正在流行的节目", onBack) }
         val subscribed = mine.value.orEmpty()
         if (subscribed.isNotEmpty()) {
@@ -274,7 +274,7 @@ internal fun NeteasePodcastScreen(
     var subscribed by remember(podcast.id) { mutableStateOf<Boolean?>(null) }
     val scope = rememberCoroutineScope()
     val dates = remember { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.CHINA) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 32.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 32.dp + LocalOverlayMiniInset.current)) {
         item(key = "head") {
             Column {
                 ExtrasHeader(
@@ -498,7 +498,7 @@ internal fun NeteasePlaylistManager(client: NeteaseClient, onBack: () -> Unit, o
     var notice by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 32.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 32.dp + LocalOverlayMiniInset.current)) {
         item(key = "head") {
             ExtrasHeader("歌单管理", notice ?: "调整顺序、设置分类、删除或取消收藏", onBack) {
                 if (reordered) {
@@ -565,7 +565,7 @@ internal fun NeteasePlaylistManager(client: NeteaseClient, onBack: () -> Unit, o
             onDismissRequest = { deleting = null },
             title = "删除歌单？",
             confirmButton = {
-                GlassTextButton(onClick = {
+                GlassTextButton(destructive = true, onClick = {
                     deleting = null
                     own.remove(playlist)
                     scope.launch {
@@ -574,7 +574,7 @@ internal fun NeteasePlaylistManager(client: NeteaseClient, onBack: () -> Unit, o
                             "删除失败"
                         } else "已删除「${playlist.name}」"
                     }
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除") }
             },
             dismissButton = { GlassTextButton(onClick = { deleting = null }) { Text("取消") } },
         ) { Text("「${playlist.name}」会从你的网易云账号里删除，无法恢复。") }

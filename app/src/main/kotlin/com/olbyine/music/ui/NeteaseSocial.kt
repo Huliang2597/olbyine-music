@@ -59,6 +59,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -519,6 +520,9 @@ internal fun NeteaseArtistScreen(
     val (home, retryHome) = rememberLoad(id) { id?.let { client.artistHome(it) } }
     val (songs, _) = rememberLoad(id) { id?.let { client.artistTopSongs(it) }.orEmpty() }
     val (albums, _) = rememberLoad(id) { id?.let { client.artistAlbums(it) }.orEmpty() }
+    val (followedIds, _) = rememberLoad(id, client.signedIn) {
+        if (client.signedIn && id != null) client.followingArtistIds() else emptySet()
+    }
     var tab by rememberSaveable(id) { mutableStateOf(ArtistTab.SONGS) }
     val roster = remember(relatedArtists, artistName) {
         (listOf<Pair<Long?, String>>(artistId to artistName) + relatedArtists.map { it.first as Long? to it.second })
@@ -531,7 +535,7 @@ internal fun NeteaseArtistScreen(
     val artist = home.value
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     Box(Modifier.fillMaxSize().background(colors.background).clickable(remember { MutableInteractionSource() }, indication = null) {}) {
-        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 32.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 32.dp + LocalOverlayMiniInset.current)) {
             item(key = "head") {
                 Box(Modifier.fillMaxWidth().clipToBounds()) {
                     Box(Modifier.fillMaxWidth().height(260.dp).parallaxHeader(listState)) {
@@ -566,8 +570,39 @@ internal fun NeteaseArtistScreen(
                             LoadingOrError(false, resolved.error ?: home.error, { retryId(); retryHome() })
                         }
                         Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.foundation.layout.FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             PillButton("播放热门歌曲", { songs.value?.takeIf { it.isNotEmpty() }?.let { onPlay(it, 0) } }, icon = Icons.Rounded.PlayArrow, enabled = !songs.value.isNullOrEmpty(), height = 40.dp)
+                            if (client.signedIn) {
+                                val context = LocalContext.current
+                                val scope = rememberCoroutineScope()
+                                var followed by remember(artist?.id, artist?.followed, followedIds.value) {
+                                    mutableStateOf(artist?.followed == true || followedIds.value?.contains(artist?.id) == true)
+                                }
+                                var pending by remember(artist?.id) { mutableStateOf(false) }
+                                PillButton(
+                                    if (followed) "已关注" else "关注",
+                                    onClick = {
+                                        val target = !followed
+                                        val artistKey = artist?.id ?: return@PillButton
+                                        if (pending) return@PillButton
+                                        followed = target
+                                        pending = true
+                                        scope.launch {
+                                            runCatching { client.setFollowArtist(artistKey, target) }.onFailure { failure ->
+                                                followed = !target
+                                                android.widget.Toast.makeText(context, failure.message ?: "操作失败", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                            pending = false
+                                        }
+                                    },
+                                    icon = if (followed) Icons.Rounded.Check else Icons.Rounded.PersonAdd,
+                                    style = if (followed) PillStyle.TONAL else PillStyle.FILLED,
+                                    height = 40.dp,
+                                )
+                            }
                             val account = artist?.accountUserId ?: 0L
                             if (account > 0) PillButton("个人主页", { onAccount(account) }, icon = Icons.Rounded.Person, style = PillStyle.TONAL, height = 40.dp)
                         }
@@ -668,12 +703,17 @@ internal fun SongWikiSection(
     modifier: Modifier = Modifier,
 ) {
     val ink = MaterialTheme.colorScheme.onBackground
-    val state by produceState<Triple<Long?, List<Pair<String, String>>, List<com.olbyine.music.data.NeteaseWikiSection>>?>(null, track.id) {
+    val state by produceState<SongWikiState?>(null, track.id) {
         value = runCatching {
             val id = resolveId(track)
-            if (id == null) Triple(null, emptyList(), emptyList())
-            else Triple(id, runCatching { client.songFacts(id) }.getOrDefault(emptyList()), runCatching { client.songWiki(id) }.getOrDefault(emptyList()))
-        }.getOrElse { Triple(null, emptyList(), emptyList()) }
+            if (id == null) SongWikiState(null, emptyList(), emptyList(), null)
+            else SongWikiState(
+                id,
+                runCatching { client.songFacts(id) }.getOrDefault(emptyList()),
+                runCatching { client.songWiki(id) }.getOrDefault(emptyList()),
+                runCatching { client.songMemory(id) }.getOrNull(),
+            )
+        }.getOrElse { SongWikiState(null, emptyList(), emptyList(), null) }
     }
     Column(modifier.fillMaxWidth()) {
         Overline("歌曲百科", color = ink.copy(alpha = .6f), modifier = Modifier.align(Alignment.CenterHorizontally))
@@ -688,28 +728,51 @@ internal fun SongWikiSection(
                 current == null -> Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
                     OlbyineSpinner(Modifier.size(24.dp), strokeWidth = 2.dp, color = ink.copy(alpha = .7f))
                 }
-                current.first == null -> Text("网易云上没有找到这首歌，暂时没有百科", style = MaterialTheme.typography.bodyMedium, color = ink.copy(alpha = .55f))
+                current.id == null -> Text("网易云上没有找到这首歌，暂时没有百科", style = MaterialTheme.typography.bodyMedium, color = ink.copy(alpha = .55f))
                 else -> {
-                    if (current.second.isEmpty() && current.third.isEmpty()) {
+                    if (current.facts.isEmpty() && current.sections.isEmpty()) {
                         Text(
                             if (client.signedIn) "这首歌还没有百科内容，来做第一个共建者吧" else "这首歌暂无公开百科；登录网易云后可看到作词、作曲等资料",
                             style = MaterialTheme.typography.bodyMedium,
                             color = ink.copy(alpha = .55f),
                         )
                     }
-                    current.second.forEach { (label, value) ->
+                    current.facts.forEach { (label, value) ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
                             Text(label, Modifier.width(72.dp), style = MaterialTheme.typography.labelLarge, color = ink.copy(alpha = .55f))
                             Text(value, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = ink.copy(alpha = .9f))
                         }
                     }
-                    current.third.filterNot { isContributors(it.title) }.forEach { section ->
+                    wikiSections(current).filterNot { isContributors(it.title) }.forEach { section ->
                         Spacer(Modifier.height(12.dp))
                         if (section.title.isNotBlank()) {
                             Text(section.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = ink)
                             Spacer(Modifier.height(6.dp))
                         }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val tiles = memoryTiles(section.entries)
+                        if (tiles != null) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                tiles.chunked(2).forEach { pair ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        pair.forEach { (label, value) ->
+                                            Column(
+                                                Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .background(ink.copy(alpha = .10f))
+                                                    .border(0.7.dp, ink.copy(alpha = .10f), RoundedCornerShape(14.dp))
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                            ) {
+                                                Text(label, style = MaterialTheme.typography.labelMedium, color = ink.copy(alpha = .6f))
+                                                Spacer(Modifier.height(3.dp))
+                                                Text(value, style = MaterialTheme.typography.bodyMedium, color = ink.copy(alpha = .92f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
+                                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        } else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             section.entries.forEach { entry ->
                                 Row(
                                     Modifier.clip(RoundedCornerShape(12.dp)).background(ink.copy(alpha = .08f)).padding(horizontal = 10.dp, vertical = 7.dp),
@@ -719,9 +782,13 @@ internal fun SongWikiSection(
                                         UrlImage(entry.imageUrl, Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)))
                                         Spacer(Modifier.width(8.dp))
                                     }
+                                    val (label, value) = wikiLabelValue(entry)
                                     Column {
-                                        if (entry.title.isNotBlank()) Text(entry.title, style = MaterialTheme.typography.labelMedium, color = ink.copy(alpha = .6f))
-                                        if (entry.text.isNotBlank()) Text(entry.text, style = MaterialTheme.typography.bodySmall, color = ink.copy(alpha = .92f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                        if (label != null) Text(label, style = MaterialTheme.typography.labelMedium, color = ink.copy(alpha = .6f))
+                                        if (value.isNotBlank()) {
+                                            if (label != null) Spacer(Modifier.height(2.dp))
+                                            Text(value, style = MaterialTheme.typography.bodyMedium, color = ink.copy(alpha = .92f), maxLines = if (label == "接口返回") 10 else 3, overflow = TextOverflow.Ellipsis)
+                                        }
                                     }
                                 }
                             }
@@ -733,12 +800,90 @@ internal fun SongWikiSection(
             }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val id = state?.first
+                val id = state?.id
                 WikiChip("参与百科共建", Icons.Rounded.Edit, enabled = id != null) { id?.let(onContribute) }
                 WikiChip("共建记录", Icons.Rounded.History, enabled = true) { onHistory(id) }
             }
         }
     }
+}
+
+private fun memoryTiles(entries: List<com.olbyine.music.data.NeteaseWikiEntry>): List<Pair<String, String>>? {
+    val parts = entries.flatMap { entry -> (entry.title + "\u3001" + entry.text).split('\u3001', '\uff0c', ',', '\n', '|') }
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    if (parts.isEmpty()) return null
+    if (parts.none { part -> WikiValueLabels.any { part.startsWith(it) } }) return null
+    val tiles = ArrayList<Pair<String, String>>()
+    var label: String? = null
+    val value = StringBuilder()
+    fun flush() {
+        val current = label ?: return
+        tiles += current to value.toString().trim()
+        value.clear()
+    }
+    parts.forEach { part ->
+        val hit = WikiValueLabels.firstOrNull { part.startsWith(it) }
+        if (hit != null) {
+            flush()
+            label = hit
+            val rest = part.removePrefix(hit).trim(' ', '\u3000', '\uff1a', ':', '\u00b7', '-', '/', '\u3001')
+            if (rest.isNotBlank()) value.append(rest)
+        } else if (label != null) {
+            if (value.isNotEmpty()) value.append(' ')
+            value.append(part)
+        }
+    }
+    flush()
+    return tiles.takeIf { it.isNotEmpty() }
+}
+
+private val WikiValueLabels = listOf("第一次听", "累计播放", "播放最多", "最近一次听", "累计播放时长", "听歌时长")
+
+private fun wikiLabelValue(entry: com.olbyine.music.data.NeteaseWikiEntry): Pair<String?, String> {
+    val title = entry.title.trim()
+    val text = entry.text.trim()
+    val separator = charArrayOf(' ', '\u3000', '：', ':', '·', '-', '/')
+    WikiValueLabels.firstOrNull { title.startsWith(it) }?.let { label ->
+        val rest = title.removePrefix(label).trim(*separator)
+        return label to rest.ifBlank { text }
+    }
+    WikiValueLabels.firstOrNull { text.startsWith(it) }?.let { label ->
+        val rest = text.removePrefix(label).trim(*separator)
+        return label to rest.ifBlank { title }
+    }
+    return title.ifBlank { null } to text
+}
+
+private data class SongWikiState(
+    val id: Long?,
+    val facts: List<Pair<String, String>>,
+    val sections: List<com.olbyine.music.data.NeteaseWikiSection>,
+    val memory: com.olbyine.music.data.NeteaseClient.MusicMemory?,
+)
+
+private fun wikiSections(state: SongWikiState): List<com.olbyine.music.data.NeteaseWikiSection> {
+    val memory = state.memory
+    fun isMemorySection(section: com.olbyine.music.data.NeteaseWikiSection) =
+        section.title.contains("回忆坐标") || section.entries.any { it.title.contains("第一次听") || it.text.contains("第一次听") }
+    val hasValues = state.sections.any { section ->
+        section.entries.any { entry ->
+            (entry.title.contains("第一次听") || entry.text.contains("第一次听")) && entry.text.any(Char::isDigit)
+        }
+    }
+    if (hasValues) return state.sections
+    val values = listOfNotNull(
+        memory?.firstListen?.let { com.olbyine.music.data.NeteaseWikiEntry("第一次听", it, null) },
+        memory?.playCount?.let { com.olbyine.music.data.NeteaseWikiEntry("累计播放", it, null) },
+    )
+    val failure = memory?.debug?.takeIf { !it.startsWith("code=200") }
+    if (values.isEmpty() && failure == null) return state.sections.filterNot(::isMemorySection)
+    val entries = values.ifEmpty { listOf(com.olbyine.music.data.NeteaseWikiEntry("接口返回", failure.orEmpty(), null)) }
+    val existing = state.sections.indexOfFirst(::isMemorySection)
+    if (existing < 0) return listOf(com.olbyine.music.data.NeteaseWikiSection("回忆坐标", entries)) + state.sections
+    val merged = state.sections.toMutableList()
+    merged[existing] = com.olbyine.music.data.NeteaseWikiSection(merged[existing].title.ifBlank { "回忆坐标" }, entries)
+    return merged
 }
 
 @Composable

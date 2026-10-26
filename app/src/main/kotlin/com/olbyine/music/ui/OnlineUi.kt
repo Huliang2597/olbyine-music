@@ -18,6 +18,10 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -160,6 +164,7 @@ internal fun NeteaseScreen(
                 onSaveLocal = onSaveLocal,
                 revealSongId = revealSongId.takeIf { pages.top?.id == playlist.id },
                 onRevealed = onRevealHandled,
+                client = client,
             )
         }
     }
@@ -377,6 +382,7 @@ private fun PlaylistTile(playlist: NeteasePlaylistSummary, onClick: () -> Unit) 
 }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 private fun NeteasePlaylistPage(
     playlist: NeteasePlaylistSummary,
     state: NeteaseUiState,
@@ -390,11 +396,29 @@ private fun NeteasePlaylistPage(
     onSaveLocal: () -> Unit,
     revealSongId: Long? = null,
     onRevealed: () -> Unit = {},
+    client: com.olbyine.music.data.NeteaseClient? = null,
 ) {
     val allSongs = state.songs
     val summary = state.openPlaylist?.takeIf { it.id == playlist.id } ?: playlist
     var query by androidx.compose.runtime.saveable.rememberSaveable(playlist.id) { mutableStateOf("") }
     val songs = remember(allSongs, query) { filterSongs(allSongs, query) }
+    var selecting by remember(playlist.id) { mutableStateOf(false) }
+    val chosen = remember(playlist.id) { androidx.compose.runtime.mutableStateListOf<Long>() }
+    var savePicker by remember(playlist.id) { mutableStateOf(false) }
+    var copySong by remember(playlist.id) { mutableStateOf<NeteaseSong?>(null) }
+    val scope2 = androidx.compose.runtime.rememberCoroutineScope()
+    val ctx2 = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.DisposableEffect(selecting) {
+        NcmSelection.active = selecting
+        onDispose { if (selecting) NcmSelection.active = false }
+    }
+    androidx.compose.runtime.DisposableEffect(playlist.id) {
+        SongSelectionHook.start = { selecting = true; chosen.clear() }
+        onDispose { if (SongSelectionHook.start != null) SongSelectionHook.start = null }
+    }
+    val playNextTrack = LocalPlayNextTrack.current
+    val neteaseDownload = LocalNeteaseDownload.current
+    val downloadMany = LocalNeteaseDownloadMany.current
     val localCount = remember(allSongs, state.localMatches) { allSongs.count { it.id in state.localMatches } }
     val haptics = rememberHaptics()
     val resumeKey = collectionKey(summary.kind.name, summary.id)
@@ -419,6 +443,7 @@ private fun NeteasePlaylistPage(
         listState.scrollBy(-revealOffset.toFloat())
         onRevealed()
     }
+    Box(Modifier.fillMaxSize()) {
     androidx.compose.foundation.lazy.LazyColumn(
         Modifier.fillMaxSize(),
         state = listState,
@@ -427,7 +452,17 @@ private fun NeteasePlaylistPage(
         item(key = "header") {
             Column(Modifier.statusBarsPadding().padding(horizontal = 8.dp)) {
                 Spacer(Modifier.height(8.dp))
-                OlbyineIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "返回", onBack, size = 38.dp, iconSize = 19.dp)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    OlbyineIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "返回", onBack, size = 38.dp, iconSize = 19.dp)
+                    Spacer(Modifier.weight(1f))
+                    PillButton(
+                        if (selecting) "完成" else "多选",
+                        { selecting = !selecting; chosen.clear() },
+                        icon = Icons.Rounded.DoneAll,
+                        style = if (selecting) PillStyle.FILLED else PillStyle.TONAL,
+                        height = 34.dp,
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (summary.liked) {
@@ -503,12 +538,31 @@ private fun NeteasePlaylistPage(
             val dim by androidx.compose.animation.core.animateFloatAsState(if (playable) 1f else .42f, tween(OlbyineTokens.Motion.standardMs), label = "row-playable")
             Row(
                 itemMotion().fillMaxWidth().clip(RoundedCornerShape(16.dp))
-                    .background(highlight)
-                    .clickable(enabled = playable) { haptics.click(HapticArea.PLAYBACK); play(index, false) }
+                    .background(if (selecting && song.id in chosen) MaterialTheme.colorScheme.primary.copy(alpha = .18f) else highlight)
+                    .combinedClickable(
+                        enabled = playable || selecting,
+                        onClick = {
+                            if (selecting) {
+                                if (!chosen.remove(song.id)) chosen += song.id
+                            } else {
+                                haptics.click(HapticArea.PLAYBACK); play(index, false)
+                            }
+                        },
+                        onLongClick = { copySong = song },
+                    )
                     .padding(start = 6.dp, top = 6.dp, bottom = 6.dp)
                     .graphicsLayer { alpha = dim },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (copySong?.id == song.id) {
+                    SongCopyMenu(
+                        expanded = true,
+                        onDismiss = { copySong = null },
+                        title = song.title,
+                        artist = song.artists.joinToString(" / "),
+                        album = song.album,
+                    )
+                }
                 Box(Modifier.size(48.dp)) {
                     UrlImage(song.coverUrl?.replace("600y600", "160y160"), Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
                     androidx.compose.animation.AnimatedVisibility(
@@ -621,6 +675,75 @@ private fun NeteasePlaylistPage(
         }
         if (state.songsPartial) item(key = "more") {
             Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
+        }
+    }
+
+    androidx.compose.animation.AnimatedVisibility(
+        visible = selecting,
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it },
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it },
+        modifier = Modifier.align(Alignment.BottomCenter),
+    ) {
+        SongSelectionBar(
+            count = chosen.size,
+            total = songs.size,
+            removable = summary.own && client != null,
+            onSelectAll = {
+                if (chosen.size == songs.size) chosen.clear() else { chosen.clear(); songs.forEach { chosen += it.id } }
+            },
+            onClose = { selecting = false; chosen.clear() },
+            onPlayNext = {
+                val picked = songs.filter { it.id in chosen }
+                if (playNextTrack != null && picked.isNotEmpty()) picked.asReversed().forEach { playNextTrack(it.toTrack()) }
+                selecting = false; chosen.clear()
+            },
+            onSave = { if (chosen.isNotEmpty()) savePicker = true },
+            onDownload = {
+                val picked = songs.filter { it.id in chosen }
+                if (downloadMany != null) downloadMany(picked) else picked.forEach { neteaseDownload?.invoke(it) }
+                selecting = false; chosen.clear()
+            },
+            onRemove = {
+                val ids = songs.filter { it.id in chosen }.map { it.id }
+                if (ids.isNotEmpty() && client != null) {
+                    scope2.launch {
+                        runCatching { client.removeFromPlaylist(summary.id, ids) }
+                            .onFailure { android.widget.Toast.makeText(ctx2, it.message ?: "移除失败", android.widget.Toast.LENGTH_SHORT).show() }
+                        selecting = false; chosen.clear()
+                    }
+                }
+            },
+            modifier = Modifier.navigationBarsPadding().padding(bottom = 14.dp),
+        )
+    }
+    }
+    if (savePicker && client != null) {
+        val (lists, _) = rememberLoad(Unit) { client.playlists() }
+        GlassBottomSheet(onDismissRequest = { savePicker = false }) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Text("收藏到歌单", Modifier.padding(20.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                lists.value.orEmpty().forEach { target ->
+                    PickerRow(
+                        leading = {
+                            UrlImage(target.coverUrl, Modifier.size(44.dp).clip(RoundedCornerShape(10.dp))) {
+                                Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)))
+                            }
+                        },
+                        title = target.name,
+                        subtitle = "${target.trackCount} 首",
+                        onClick = {
+                            savePicker = false
+                            val ids = songs.filter { it.id in chosen }.map { it.id }
+                            scope2.launch {
+                                runCatching { client.addToPlaylist(target.id, ids) }
+                                    .onFailure { android.widget.Toast.makeText(ctx2, it.message ?: "收藏失败", android.widget.Toast.LENGTH_SHORT).show() }
+                                selecting = false; chosen.clear()
+                            }
+                        },
+                    )
+                }
+                Spacer(Modifier.navigationBarsPadding().height(12.dp))
+            }
         }
     }
 }

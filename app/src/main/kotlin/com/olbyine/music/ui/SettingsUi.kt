@@ -60,6 +60,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.rounded.ShortText
 import androidx.compose.material.icons.rounded.Abc
+import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.PictureInPicture
@@ -467,9 +468,7 @@ private fun PlayerSettingsPage(state: MainUiState, viewModel: MainViewModel) {
         GroupDivider()
         SettingSwitch(Icons.Rounded.Headphones, "显示本地/监听切换", "播放页底部的切换；播放网易云 / SoundCloud 歌曲时会自动隐藏",
             settings.showSourceSwitch, viewModel::setShowSourceSwitch)
-        GroupDivider()
-        SettingSwitch(Icons.Rounded.PictureInPicture, "悬浮封面按钮", "打开听歌排行、收藏专辑、播客、歌单管理等子页面时，把底部播放器收成可拖动的封面按钮",
-            settings.floatingCoverButton, viewModel::setFloatingCoverButton)
+
     }
     SettingsGroup("特效（来自 React Bits）") {
         com.olbyine.music.data.PlayerFx.labels.forEachIndexed { index, (bit, title, description) ->
@@ -799,6 +798,21 @@ private fun LibrarySettingsPage(state: MainUiState, viewModel: MainViewModel) {
         LinkRow(Icons.Rounded.Refresh, "重新扫描曲目信息", "重新读取曲目号、碟号、年份、专辑艺人与音频格式，修正专辑内的歌曲顺序", viewModel::rescanLibraryTags)
         GroupDivider()
         LinkRow(Icons.Rounded.Image, "补全全部封面与信息", "为整个曲库中缺少封面或信息的歌曲在线补全", viewModel::completeLibraryMetadata)
+    }
+    var cacheBytes by remember { mutableStateOf<Long?>(null) }
+    val cacheScope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { cacheBytes = viewModel.cacheUsageBytes() }
+    SettingsGroup("存储") {
+        LinkRow(
+            Icons.Rounded.CleaningServices,
+            "清理缓存",
+            cacheBytes?.let { "封面缩略图、歌单列表、在线信息、一起听与视频律动缓存，当前占用 ${formatDownloadSize(it)}" }
+                ?: "封面缩略图、歌单列表、在线信息、一起听与视频律动缓存",
+            onClick = {
+                viewModel.clearCaches()
+                cacheScope.launch { kotlinx.coroutines.delay(400); cacheBytes = viewModel.cacheUsageBytes() }
+            },
+        )
     }
 }
 
@@ -1498,8 +1512,8 @@ private fun currentIcon(context: android.content.Context): String {
     return IconOptions.firstOrNull { option ->
         val state = pm.getComponentEnabledSetting(ComponentName(context.packageName, context.packageName + option.alias))
         state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED ||
-            (state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT && option.alias == ".IconAurora")
-    }?.alias ?: ".IconAurora"
+            (state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT && option.alias == ".IconPorcelain")
+    }?.alias ?: ".IconPorcelain"
 }
 
 private fun selectIcon(context: android.content.Context, alias: String) {
@@ -2171,7 +2185,7 @@ private fun AppleTokenDialog(hasToken: Boolean, onDismiss: () -> Unit, onSave: (
         confirmButton = { GlassTextButton(onClick = { onSave(value) }, enabled = value.trim().length > 20) { Text("保存") } },
         dismissButton = {
             Row {
-                if (hasToken) GlassTextButton(onClick = { onSave(null) }) { Text("清除", color = MaterialTheme.colorScheme.error) }
+                if (hasToken) GlassTextButton(destructive = true, onClick = { onSave(null) }) { Text("清除") }
                 GlassTextButton(onClick = onDismiss) { Text("取消") }
             }
         },

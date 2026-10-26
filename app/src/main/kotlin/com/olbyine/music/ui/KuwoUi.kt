@@ -286,10 +286,10 @@ internal fun KuwoScreen(
             onDismissRequest = { pendingDelete = null },
             title = "删除「${target.name}」？",
             confirmButton = {
-                GlassTextButton(onClick = {
+                GlassTextButton(destructive = true, onClick = {
                     pendingDelete = null
                     onDeleteMine(target.id)
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除") }
             },
             dismissButton = { GlassTextButton(onClick = { pendingDelete = null }) { Text("取消") } },
         ) {

@@ -5,6 +5,7 @@ package com.olbyine.music.ui
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -509,6 +510,7 @@ internal fun NeteaseSearch(
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal fun NeteaseSongRow(song: NeteaseSong, current: Boolean, onClick: () -> Unit) {
     val comments = LocalNeteaseComments.current
     val highlight by androidx.compose.animation.animateColorAsState(
@@ -521,13 +523,21 @@ internal fun NeteaseSongRow(song: NeteaseSong, current: Boolean, onClick: () -> 
         tween(OlbyineTokens.Motion.standardMs, easing = OlbyineTokens.Motion.easeOut),
         label = "row-title",
     )
+    var copyMenu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
             .background(highlight)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = { copyMenu = true })
             .padding(start = 8.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SongCopyMenu(
+            expanded = copyMenu,
+            onDismiss = { copyMenu = false },
+            title = song.title,
+            artist = song.artists.joinToString(" / "),
+            album = song.album,
+        )
         val playing = LocalIsPlaying.current()
         Box(Modifier.size(48.dp)) {
             UrlImage(song.coverUrl?.replace("600y600", "160y160"), Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))

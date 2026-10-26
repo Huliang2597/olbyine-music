@@ -98,7 +98,6 @@ class SettingsRepository(context: Context) {
 
     fun setShowSourceSwitch(value: Boolean) = update { it.copy(showSourceSwitch = value) }
 
-    fun setFloatingCoverButton(value: Boolean) = update { it.copy(floatingCoverButton = value) }
 
     fun setBackgroundStyle(value: String) = update { it.copy(backgroundStyle = if (value == "amll") "amll" else "ios") }
 
@@ -200,7 +199,6 @@ class SettingsRepository(context: Context) {
             .putBoolean(KEY_LYRIC_DOUBLE_TAP_SEEK, next.lyricDoubleTapSeek)
             .putString(KEY_LYRIC_MV_STYLE, next.lyricMvStyle)
             .putBoolean(KEY_SOURCE_SWITCH, next.showSourceSwitch)
-            .putBoolean(KEY_FLOATING_COVER_BUTTON, next.floatingCoverButton)
             .putString(KEY_BACKGROUND_STYLE, next.backgroundStyle)
             .putString(KEY_UI_STYLE, next.uiStyle.name)
             .putString(KEY_LAYOUT_MODE, next.layoutMode)
@@ -300,7 +298,6 @@ class SettingsRepository(context: Context) {
             lyricDoubleTapSeek = b(KEY_LYRIC_DOUBLE_TAP_SEEK, true),
             lyricMvStyle = s(KEY_LYRIC_MV_STYLE, null).orEmpty(),
             showSourceSwitch = b(KEY_SOURCE_SWITCH, true),
-            floatingCoverButton = b(KEY_FLOATING_COVER_BUTTON, true),
             backgroundStyle = s(KEY_BACKGROUND_STYLE, null) ?: "ios",
             usbDirectDriver = b(KEY_USB_DIRECT, false),
             uiStyle = runCatching { UiStyle.valueOf(s(KEY_UI_STYLE, null) ?: UiStyle.IOS.name) }.getOrDefault(UiStyle.IOS),
@@ -407,7 +404,6 @@ class SettingsRepository(context: Context) {
         const val KEY_FLOATING_LYRICS_COLOR = "floating_lyrics_color"
         const val KEY_LYRIC_DOUBLE_TAP_SEEK = "lyric_double_tap_seek"
         const val KEY_LYRIC_MV_STYLE = "lyric_mv_style"
-        const val KEY_FLOATING_COVER_BUTTON = "floating_cover_button"
         const val KEY_SOURCE_SWITCH = "player_source_switch"
         const val KEY_PLAY_SHUFFLE = "play_shuffle"
         const val KEY_PLAY_REPEAT = "play_repeat"

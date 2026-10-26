@@ -17,6 +17,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,6 +66,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.MoreHoriz
@@ -191,6 +193,7 @@ internal fun PlayerPage(
     onLyrics: () -> Unit,
     onInfo: () -> Unit,
     onFavorite: () -> Unit,
+    onComposer: (String?) -> Unit = {},
     onPlayMode: (PlayMode) -> Unit,
     onSpeed: (Float) -> Unit,
     onSearchLyrics: (LyricsSearchSource) -> Unit,
@@ -270,6 +273,7 @@ internal fun PlayerPage(
                     onSeek = onSeek,
                     onLyrics = onLyrics,
                     onFavorite = onFavorite,
+                    onComposer = onComposer,
                     onModeButton = openModeMenu,
                     onOpenLibrary = onOpenLibrary,
                     onRevealInLibrary = onRevealInLibrary,
@@ -362,6 +366,7 @@ private fun PlayerBody(
     onSeek: (Long) -> Unit,
     onLyrics: () -> Unit,
     onFavorite: () -> Unit,
+    onComposer: (String?) -> Unit,
     onModeButton: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
     onOpenLibrary: () -> Unit,
     onRevealInLibrary: () -> Unit,
@@ -378,7 +383,7 @@ private fun PlayerBody(
         if (maxWidth > maxHeight && maxHeight < 460.dp) {
             LandscapePlayerBody(
                 state, track, listening, maxHeight, shared, glass, onTogglePlay, onPrevious, onNext, onSeek, onLyrics,
-                onFavorite, onModeButton, onOpenLibrary, onRevealInLibrary, onQueue, onListening, onOpenExternalApp, onTransition, menu,
+                onFavorite, onComposer, onModeButton, onOpenLibrary, onRevealInLibrary, onQueue, onListening, onOpenExternalApp, onTransition, menu,
             )
             return@BoxWithConstraints
         }
@@ -399,7 +404,7 @@ private fun PlayerBody(
             )
             Spacer(Modifier.weight(1f))
             Spacer(Modifier.height(18.dp))
-            TrackTitleRow(track, if (listening == null) onFavorite else null)
+            TrackTitleRow(track, if (listening == null) onFavorite else null, if (listening == null) onComposer else null)
             Spacer(Modifier.height(14.dp))
             SeekBar(
                 playback = state.playback,
@@ -512,6 +517,7 @@ private fun LandscapePlayerBody(
     onSeek: (Long) -> Unit,
     onLyrics: () -> Unit,
     onFavorite: () -> Unit,
+    onComposer: (String?) -> Unit,
     onModeButton: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
     onOpenLibrary: () -> Unit,
     onRevealInLibrary: () -> Unit,
@@ -545,7 +551,7 @@ private fun LandscapePlayerBody(
                     )
                     Spacer(Modifier.height(4.dp))
                 }
-                TrackTitleRow(track, if (listening == null) onFavorite else null)
+                TrackTitleRow(track, if (listening == null) onFavorite else null, if (listening == null) onComposer else null)
                 Spacer(Modifier.height(if (height > 300.dp) 14.dp else 6.dp))
                 SeekBar(playback = state.playback, fallbackDuration = track.durationMs, onSeek = onSeek) {
                     PlaybackBadges(state, track, listening)
@@ -1074,22 +1080,74 @@ private fun PlayerArtwork(
 }
 
 @Composable
-private fun TrackTitleRow(track: Track, onFavorite: (() -> Unit)?) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun TrackTitleRow(track: Track, onFavorite: (() -> Unit)?, onComposer: ((String?) -> Unit)? = null) {
+    var composerPick by remember(track.id) { mutableStateOf<List<String>?>(null) }
+    var composerPickTitle by remember(track.id) { mutableStateOf("选择作曲人") }
+    var copyMenu by remember(track.id) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
+            SongCopyMenu(
+                expanded = copyMenu,
+                onDismiss = { copyMenu = false },
+                title = track.title,
+                artist = track.artist,
+                album = track.album,
+            )
             RevealText(
                 track.title,
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().combinedClickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                    onLongClick = { copyMenu = true },
+                ),
                 textModifier = Modifier.unlessReducedMotion { basicMarquee(iterations = 2, initialDelayMillis = 1_800) },
             )
             Spacer(Modifier.height(2.dp))
+            val artistName = track.artist
             RevealText(
-                track.artist,
+                artistName,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = .66f),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (onComposer != null && artistName.isNotBlank()) {
+                            Modifier.combinedClickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null,
+                                onLongClick = { copyMenu = true },
+                                onClickLabel = "作曲人主页",
+                            ) {
+                                val composers = track.composerNames().filter { it.isNotBlank() }.distinct()
+                                val artists = track.artist
+                                    .split("/", "、", ";", "；", "&", ",", "，", "|", " feat. ", " featuring ")
+                                    .map { it.trim() }
+                                    .filter { it.isNotBlank() }
+                                    .distinct()
+                                when {
+                                    composers.size > 1 -> {
+                                        composerPickTitle = "选择作曲人"
+                                        composerPick = composers
+                                    }
+                                    composers.size == 1 -> onComposer(composers.first())
+                                    artists.size > 1 -> {
+                                        composerPickTitle = "选择艺术家"
+                                        composerPick = artists
+                                    }
+                                    else -> onComposer(artists.firstOrNull())
+                                }
+                            }
+                        } else Modifier.combinedClickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                            onClick = {},
+                            onLongClick = { copyMenu = true },
+                        ),
+                    ),
                 delayMs = 90L,
                 textModifier = Modifier.unlessReducedMotion { basicMarquee(iterations = 2, initialDelayMillis = 1_800) },
             )
@@ -1144,6 +1202,81 @@ private fun TrackTitleRow(track: Track, onFavorite: (() -> Unit)?) {
                     minSize = 46.dp,
                     showQueueActions = false,
                 )
+            }
+        }
+    }
+    val picks = composerPick
+    if (picks != null) {
+        androidx.compose.runtime.LaunchedEffect(picks) {
+            runCatching { com.olbyine.music.data.ArtistAvatars.resolve?.invoke(picks) }
+        }
+    }
+    if (picks != null && onComposer != null) {
+        OlbyineDialog(
+            onDismissRequest = { composerPick = null },
+            title = composerPickTitle,
+            confirmButton = {},
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { composerPick = null }) {
+                    androidx.compose.material3.Text("取消")
+                }
+            },
+        ) {
+            Column(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                picks.forEach { name ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                            .clickable {
+                                composerPick = null
+                                onComposer(name)
+                            }
+                            .padding(horizontal = 10.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val avatar = com.olbyine.music.data.ArtistAvatars.get(name)
+                        if (avatar != null) {
+                            UrlImage("$avatar?param=100y100", Modifier.size(38.dp).clip(CircleShape))
+                        } else {
+                            Box(
+                                Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = .14f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    name.trim().take(1).ifBlank { "音" },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                name,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                "点击进入主页",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .8f),
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            null,
+                            Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .7f),
+                        )
+                    }
+                }
             }
         }
     }

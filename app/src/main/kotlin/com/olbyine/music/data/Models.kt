@@ -155,7 +155,6 @@ data class UserSettings(
     val lyricDoubleTapSeek: Boolean = true,
     val lyricMvStyle: String = "",
     val showSourceSwitch: Boolean = true,
-    val floatingCoverButton: Boolean = true,
     val backgroundStyle: String = "ios",
     val layoutMode: String = "auto",
     val albumStyle: String = "grid",
