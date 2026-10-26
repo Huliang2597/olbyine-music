@@ -90,7 +90,9 @@ Android 10+ · arm64-v8a / armeabi-v7a · AGPL-3.0
 ./gradlew :app:assembleRelease
 ```
 
-产物在 `app/build/outputs/apk/release/`。发布用的安装包由 GitHub Actions 在推送 `v*` 标签时打包，版本号取自 `app/build.gradle`。
+产物在 `app/build/outputs/apk/release/`。根目录有 `keystore.properties`（字段 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`）时用其中的签名，否则使用 debug 签名。
+
+发布用的安装包由 GitHub Actions 在推送 `v*` 标签时构建并签名，标签须与 `app/build.gradle` 的 `versionName` 一致（如 `v1.4` 对应 `'1.4'`），更新说明取自 `.github/release-notes/<版本>.md`。签名读取仓库 Actions Secrets：`ANDROID_KEYSTORE_BASE64`（keystore 文件的 base64）、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`，缺少任何一项时发布会失败。
 
 歌词引擎静态资源位于 `app/src/native/assets/amll/`。如需从源码重建，需要 Node.js 和 pnpm：
 

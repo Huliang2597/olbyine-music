@@ -14,6 +14,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Check version
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          NAME="$(sed -n "s/^ *versionName '\(.*\)'.*/\1/p" app/build.gradle)"
+          if [ "$VER" != "$NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match versionName '$NAME' in app/build.gradle" >&2
+            exit 1
+          fi
+
+      # build.gradle 找不到 keystore.properties 时会退回 debug 签名，所以缺 Secrets 必须直接失败
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "missing secret ANDROID_${name}" >&2
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          {
+            printf 'storeFile=%s\n' "$RUNNER_TEMP/release.jks"
+            printf 'storePassword=%s\n' "$KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: Build APK
+        run: bash ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Verify signature
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          BUILD_TOOLS="$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
+          if grep -q 'CN=Android Debug' "$RUNNER_TEMP/certs.txt"; then
+            echo "APK is signed with the debug key" >&2
+            exit 1
+          fi
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -21,12 +74,9 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VER="${TAG#v}"
-          APK="dist/Olbyine-${VER}-release.apk"
+          APK="$RUNNER_TEMP/Olbyine-${VER}-release.apk"
           NOTES=".github/release-notes/${VER}.md"
-          if [ ! -f "$APK" ]; then
-            echo "missing $APK" >&2
-            exit 1
-          fi
+          cp app/build/outputs/apk/release/app-release.apk "$APK"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes --cleanup-tag=false
           fi
