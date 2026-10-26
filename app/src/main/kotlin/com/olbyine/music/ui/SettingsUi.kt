@@ -56,6 +56,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.rounded.ShortText
@@ -444,6 +445,13 @@ private fun AppearancePage(state: MainUiState, viewModel: MainViewModel, onPickB
 @Composable
 private fun PlayerSettingsPage(state: MainUiState, viewModel: MainViewModel) {
     val settings = state.settings
+    SettingsGroup("全屏") {
+        ChoiceRow(
+            Icons.Rounded.Fullscreen, "进入播放页时全屏", "隐藏状态栏和底部手势横条；仅在对应屏幕方向下生效",
+            listOf("off" to "关闭", "portrait" to "仅竖屏", "landscape" to "仅横屏", "always" to "全局"),
+            settings.playerFullscreen, viewModel::setPlayerFullscreen,
+        )
+    }
     SettingsGroup("封面与背景") {
         ChoiceRow(
             Icons.Rounded.Wallpaper, "背景样式", "Apple Music 流光：iOS 版的多层旋转封面 + 大半径模糊（参考 Lyricify-Backgrounds）；AMLL 流体：网页版 AMLL 的流动网格",

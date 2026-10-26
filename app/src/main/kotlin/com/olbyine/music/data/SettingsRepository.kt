@@ -154,6 +154,8 @@ class SettingsRepository(context: Context) {
     fun setAutoUpdateCheck(value: Boolean) = update { it.copy(autoUpdateCheck = value) }
     fun setNeteaseQuality(value: String) = update { it.copy(neteaseQuality = value) }
 
+    fun setPlayerFullscreen(value: String) = update { it.copy(playerFullscreen = value) }
+
     private fun update(transform: (UserSettings) -> UserSettings) {
         val next = transform(_settings.value)
         if (next == _settings.value) return
@@ -234,6 +236,7 @@ class SettingsRepository(context: Context) {
             .putString(KEY_KUWO_QUALITY, next.kuwoQuality)
             .putBoolean(KEY_AUTO_UPDATE, next.autoUpdateCheck)
             .putString(KEY_NETEASE_QUALITY, next.neteaseQuality)
+                .putString(KEY_PLAYER_FULLSCREEN, next.playerFullscreen)
             .apply()
         com.olbyine.music.playback.AudioEffects.update(next)
     }
@@ -335,6 +338,7 @@ class SettingsRepository(context: Context) {
             kuwoQuality = s(KEY_KUWO_QUALITY, "320k") ?: "320k",
             autoUpdateCheck = b(KEY_AUTO_UPDATE, true),
             neteaseQuality = s(KEY_NETEASE_QUALITY, null) ?: "exhigh",
+            playerFullscreen = s(KEY_PLAYER_FULLSCREEN, null) ?: "off",
         ).also { com.olbyine.music.playback.AudioEffects.update(it) }
     }
 
@@ -370,6 +374,7 @@ class SettingsRepository(context: Context) {
         const val KEY_KUWO_QUALITY = "kuwo_quality"
         const val KEY_AUTO_UPDATE = "auto_update_check"
         const val KEY_NETEASE_QUALITY = "netease_quality"
+    const val KEY_PLAYER_FULLSCREEN = "player_fullscreen"
         const val KEY_THEME = "theme"
         const val KEY_LYRIC_SIZE = "lyric_size"
         const val KEY_LYRIC_GAP = "lyric_gap"

@@ -6,7 +6,7 @@ local.properties
 *.keystore
 *.apk
 *.aab
-!dist/*.apk
+dist/
 .idea/
 *.iml
 .DS_Store

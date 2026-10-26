@@ -845,6 +845,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setUsbMaxVolume(value: Int) = settingsRepository.setUsbMaxVolume(value)
     fun setNeteaseOnline(value: Boolean) = settingsRepository.setNeteaseOnline(value)
     fun setNeteaseQuality(value: String) = settingsRepository.setNeteaseQuality(value)
+
+    fun setPlayerFullscreen(value: String) = settingsRepository.setPlayerFullscreen(value)
     fun setNeteaseDownloadQuality(value: String) = settingsRepository.setNeteaseDownloadQuality(value)
     fun setNeteaseDownloadLyrics(value: Boolean) = settingsRepository.setNeteaseDownloadLyrics(value)
 

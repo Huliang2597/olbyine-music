@@ -246,6 +246,34 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     }
 
     val playerOpen = state.destination == AppDestination.NOW_PLAYING
+    val fullscreenMode = state.settings.playerFullscreen
+    val portrait = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+    val fullscreenActive = playerOpen && when (fullscreenMode) {
+        "portrait" -> portrait
+        "landscape" -> !portrait
+        "always" -> true
+        else -> false
+    }
+    val fullscreenView = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(fullscreenActive) {
+        val window = (fullscreenView.context as? android.app.Activity)?.window
+        if (window != null) {
+            val controller = androidx.core.view.WindowCompat.getInsetsController(window, fullscreenView)
+            if (fullscreenActive) {
+                controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {
+            val disposeWindow = (fullscreenView.context as? android.app.Activity)?.window
+            if (disposeWindow != null) {
+                androidx.core.view.WindowCompat.getInsetsController(disposeWindow, fullscreenView)
+                    .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
     val sheet = rememberSpringValue(if (playerOpen) 1f else 0f)
     var infoVisible by rememberSaveable { mutableStateOf(false) }
     val pageTarget = when {
@@ -914,7 +942,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                     }
                 }
                 }
-                if (playerFx(com.olbyine.music.data.PlayerFx.GRADUAL_BLUR) && !appLayout.tablet && dockHeightPx > 0) {
+                if (playerFx(com.olbyine.music.data.PlayerFx.GRADUAL_BLUR) && !appLayout.tablet && dockHeightPx > 0 && !NcmSelection.active) {
                     val dockHeight = with(androidx.compose.ui.platform.LocalDensity.current) { dockHeightPx.toDp() }
                     Box(Modifier.fillMaxSize()) {
                         Box(

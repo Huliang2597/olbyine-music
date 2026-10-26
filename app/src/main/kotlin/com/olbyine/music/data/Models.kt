@@ -193,6 +193,7 @@ data class UserSettings(
     val kuwoQuality: String = "320k",
     val autoUpdateCheck: Boolean = true,
     val neteaseQuality: String = "exhigh",
+    val playerFullscreen: String = "off",
 )
 
 object HapticArea {
