@@ -272,6 +272,24 @@ private class Selection {
     }
 }
 
+// key() 放在独立的组合函数里：直接写在 LibraryScreen 中时，键值变化会让其后的 LaunchedEffect 重启，把刚开始的多选清空
+@Composable
+private fun LibraryBackHandlers(
+    selecting: Boolean,
+    searchOpen: Boolean,
+    drilledIn: Boolean,
+    underPlayer: Boolean,
+    onClearSelection: () -> Unit,
+    onCloseSearch: () -> Unit,
+    onBack: () -> Unit,
+) {
+    androidx.compose.runtime.key(selecting, searchOpen, drilledIn, underPlayer) {
+        BackHandler(enabled = selecting && !underPlayer, onBack = onClearSelection)
+        BackHandler(enabled = !selecting && searchOpen && !underPlayer, onBack = onCloseSearch)
+        BackHandler(enabled = !selecting && !searchOpen && drilledIn && !underPlayer, onBack = onBack)
+    }
+}
+
 @Composable
 private fun LibraryBackHandlers(
     selecting: Boolean,

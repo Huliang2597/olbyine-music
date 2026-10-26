@@ -1659,11 +1659,11 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             onDismissRequest = { removeConfirmFor = null },
             title = "移除这首歌？",
             confirmButton = {
-                GlassTextButton(onClick = {
+                GlassTextButton(destructive = true, onClick = {
                     removeConfirmFor = null
                     viewModel.collapseNowPlaying()
                     viewModel.deleteTrack(target)
-                }) { Text("移除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("移除") }
             },
             dismissButton = { GlassTextButton(onClick = { removeConfirmFor = null }) { Text("取消") } },
         ) { Text("将从音乐库移除「${target.title}」，原音频文件不会被删除。") }
