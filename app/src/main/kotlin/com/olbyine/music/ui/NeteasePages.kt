@@ -597,7 +597,7 @@ internal fun NeteaseCollectionScreen(
             }
         }
         if (data != null && !data.complete) item(key = "more") {
-            Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
+            Box(itemMotion().fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
         }
         item(key = "bottom") { Spacer(Modifier.navigationBarsPadding()) }
     }

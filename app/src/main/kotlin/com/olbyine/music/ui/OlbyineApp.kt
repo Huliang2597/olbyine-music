@@ -1631,11 +1631,13 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(playlist.name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Icon(
-                                if (included) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline,
-                                null,
-                                tint = if (included) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            SwapContent(included, contentAlignment = Alignment.Center) { on ->
+                                Icon(
+                                    if (on) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline,
+                                    null,
+                                    tint = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }

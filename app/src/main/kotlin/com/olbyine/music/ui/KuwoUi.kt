@@ -964,56 +964,62 @@ private fun AddToPlaylistDialog(
         onDismissRequest = onDismiss,
         title = if (creating) "新建歌单并添加" else "添加$label 到歌单",
         confirmButton = {
-            if (creating) {
-                GlassTextButton(onClick = { onCreate(name) }) { Text("创建并添加") }
-            } else {
-                GlassTextButton(onClick = { creating = true }) { Text("新建歌单") }
+            SwapContent(creating) { isCreating ->
+                if (isCreating) {
+                    GlassTextButton(onClick = { onCreate(name) }) { Text("创建并添加") }
+                } else {
+                    GlassTextButton(onClick = { creating = true }) { Text("新建歌单") }
+                }
             }
         },
         dismissButton = {
-            if (creating) {
-                GlassTextButton(onClick = { creating = false }) { Text("返回") }
-            } else {
-                GlassTextButton(onClick = onDismiss) { Text("取消") }
+            SwapContent(creating) { isCreating ->
+                if (isCreating) {
+                    GlassTextButton(onClick = { creating = false }) { Text("返回") }
+                } else {
+                    GlassTextButton(onClick = onDismiss) { Text("取消") }
+                }
             }
         },
     ) {
-        if (creating) {
-            OlbyineTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = "歌单名称",
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else if (playlists.isEmpty()) {
-            Text(
-                "还没有歌单，点「新建歌单」建一个。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Column(Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-                playlists.forEach { playlist ->
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onPick(playlist.id) }
-                            .padding(horizontal = 6.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        UrlImage(
-                            playlist.songs.firstOrNull()?.coverUrl,
-                            Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(playlist.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                "${playlist.songs.size} 首",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        SwapContent(creating) { isCreating ->
+            if (isCreating) {
+                OlbyineTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = "歌单名称",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else if (playlists.isEmpty()) {
+                Text(
+                    "还没有歌单，点「新建歌单」建一个。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    playlists.forEach { playlist ->
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onPick(playlist.id) }
+                                .padding(horizontal = 6.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            UrlImage(
+                                playlist.songs.firstOrNull()?.coverUrl,
+                                Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                             )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(playlist.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${playlist.songs.size} 首",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }

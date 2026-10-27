@@ -1643,7 +1643,7 @@ private fun AlbumTrackRow(
             style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .8f),
         )
-        if (!selecting) {
+        SelectingSwap(selecting, 0.dp) {
             HeartWithMenu(
                 track = { track },
                 liked = track.favorite,
@@ -1916,7 +1916,7 @@ private fun TrackRow(
             style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .8f),
         )
-        if (!selecting) {
+        SelectingSwap(selecting, 0.dp) {
             GhostIconButton(
                 Icons.AutoMirrored.Rounded.PlaylistPlay,
                 "下一首播放",

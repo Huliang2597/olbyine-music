@@ -795,7 +795,7 @@ internal fun NeteaseLoginSheet(
             state.error?.let {
                 Text(it, Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
-            if (state.busy && method != LoginMethod.QR) {
+            RevealIn(state.busy && method != LoginMethod.QR) {
                 Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) { OlbyineSpinner(Modifier.size(24.dp)) }
             }
         }
