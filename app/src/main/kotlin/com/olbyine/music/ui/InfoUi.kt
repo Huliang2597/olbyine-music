@@ -617,69 +617,79 @@ internal fun PlaylistImportSheet(
             }
         }
         val playlist = state.playlist
-        when {
-            state.loading -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
-            playlist == null && spotify && state.spotifyPlaylists.isNotEmpty() -> {
-                Overline("我的歌单", Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp))
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                    itemsIndexed(state.spotifyPlaylists, key = { index, it -> "$index:${it.id}" }) { _, item ->
-                        Row(
-                            itemMotion().fillMaxWidth().clickable { onFetch(item.id) }.padding(horizontal = 20.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            UrlImage(item.imageUrl, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(item.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${item.owner} · ${item.trackCount} 首", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val phase = when {
+            state.loading -> 0
+            playlist == null && spotify && state.spotifyPlaylists.isNotEmpty() -> 1
+            playlist != null -> 2
+            else -> 3
+        }
+        SwapContent(phase) { shown ->
+            Column(Modifier.fillMaxWidth()) {
+                when (shown) {
+                    0 -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) { OlbyineSpinner() }
+                    1 -> {
+                        Overline("我的歌单", Modifier.padding(start = 20.dp, top = 16.dp, bottom = 6.dp))
+                        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                            itemsIndexed(state.spotifyPlaylists, key = { index, it -> "$index:${it.id}" }) { _, item ->
+                                Row(
+                                    itemMotion().fillMaxWidth().clickable { onFetch(item.id) }.padding(horizontal = 20.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    UrlImage(item.imageUrl, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(item.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("${item.owner} · ${item.trackCount} 首", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
-            playlist != null -> {
-                val found = playlist.songs.count { state.matches.containsKey(it.id) }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    UrlImage(playlist.coverUrl, Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(playlist.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            "${playlist.creator.ifBlank { "网易云音乐" }} · ${playlist.songs.size} 首 · 本地找到 $found 首",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    2 -> if (playlist != null) {
+                        val found = playlist.songs.count { state.matches.containsKey(it.id) }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            UrlImage(playlist.coverUrl, Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(playlist.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${playlist.creator.ifBlank { "网易云音乐" }} · ${playlist.songs.size} 首 · 本地找到 $found 首",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                            itemsIndexed(playlist.songs, key = { index, it -> "$index:${it.id}" }) { _, song ->
+                                val matched = state.matches.containsKey(song.id)
+                                Row(itemMotion().fillMaxWidth().padding(horizontal = 20.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            song.title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (matched) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .6f),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            song.artists.joinToString(" / "),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (matched) 1f else .5f),
+                                            maxLines = 1,
+                                        )
+                                    }
+                                    Badge(if (matched) "本地" else "未找到", color = if (matched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, filled = matched)
+                                }
+                            }
+                        }
+                        PillButton(
+                            "创建歌单（$found 首）",
+                            onConfirm,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                            enabled = found > 0,
                         )
                     }
                 }
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
-                    itemsIndexed(playlist.songs, key = { index, it -> "$index:${it.id}" }) { _, song ->
-                        val matched = state.matches.containsKey(song.id)
-                        Row(itemMotion().fillMaxWidth().padding(horizontal = 20.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    song.title,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (matched) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .6f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    song.artists.joinToString(" / "),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (matched) 1f else .5f),
-                                    maxLines = 1,
-                                )
-                            }
-                            Badge(if (matched) "本地" else "未找到", color = if (matched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, filled = matched)
-                        }
-                    }
-                }
-                PillButton(
-                    "创建歌单（$found 首）",
-                    onConfirm,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                    enabled = found > 0,
-                )
             }
         }
         Spacer(Modifier.navigationBarsPadding().height(12.dp))

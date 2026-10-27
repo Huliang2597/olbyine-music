@@ -512,7 +512,7 @@ internal fun OnlineLyricsSheet(
             )
         }
         Spacer(Modifier.height(10.dp))
-        if (busy) {
+        RevealIn(busy) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp)) {
                 OlbyineProgressBar(
                     null,

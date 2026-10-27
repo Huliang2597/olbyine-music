@@ -501,7 +501,7 @@ internal fun NeteasePlaylistManager(client: NeteaseClient, onBack: () -> Unit, o
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 6.dp, end = 6.dp, bottom = 32.dp + LocalOverlayMiniInset.current)) {
         item(key = "head") {
             ExtrasHeader("歌单管理", notice ?: "调整顺序、设置分类、删除或取消收藏", onBack) {
-                if (reordered) {
+                PopIn(reordered) {
                     PillButton("保存顺序", {
                         reordered = false
                         scope.launch {

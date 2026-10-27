@@ -220,6 +220,20 @@ internal fun PopIn(visible: Boolean, modifier: Modifier = Modifier, content: @Co
     ) { content() }
 }
 
+// 列表/表单里整段出现或收起的内容：高度跟着展开，下面的内容不会跳动
+@Composable
+internal fun RevealIn(visible: Boolean, modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    val reduce = LocalReduceMotion.current
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = if (reduce) fadeIn(tween(150)) else fadeIn(tween(OlbyineTokens.Motion.standardMs, easing = OlbyineTokens.Motion.easeOut)) +
+            androidx.compose.animation.expandVertically(OlbyineMotion.resize, expandFrom = Alignment.Top),
+        exit = if (reduce) fadeOut(tween(90)) else fadeOut(tween(OlbyineTokens.Motion.quickMs)) +
+            androidx.compose.animation.shrinkVertically(OlbyineMotion.resize, shrinkTowards = Alignment.Top),
+    ) { Column { content() } }
+}
+
 internal fun Modifier.parallaxHeader(state: androidx.compose.foundation.lazy.LazyListState, factor: Float = .45f): Modifier = composed {
     if (LocalReduceMotion.current) Modifier
     else Modifier.graphicsLayer {

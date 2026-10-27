@@ -1310,7 +1310,7 @@ internal fun ListenTogetherSheet(
                                 onMessage("已复制邀请链接")
                             }, icon = Icons.Rounded.ContentCopy, style = PillStyle.TONAL, height = 40.dp)
                         }
-                        if (inviting) {
+                        RevealIn(inviting) {
                             Spacer(Modifier.height(10.dp))
                             FriendPicker(client, selected)
                             PillButton("发送邀请", {
@@ -1387,7 +1387,7 @@ internal fun ListenTogetherSheet(
                     SummaryStat("本次一起听了", "${summary.songs}", "首", Modifier.weight(1f))
                     SummaryStat("本次陪伴彼此", togetherSpan(summary.minutes), "", Modifier.weight(1f))
                 }
-                if (historyOpen) {
+                RevealIn(historyOpen) {
                     Spacer(Modifier.height(14.dp))
                     Text(
                         "聊天记录",
