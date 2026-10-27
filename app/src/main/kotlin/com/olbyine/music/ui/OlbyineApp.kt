@@ -510,9 +510,13 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val navBottomPx = WindowInsets.navigationBars.getBottom(density)
     val collapsedBounds: () -> Rect = {
         launchBounds ?: miniBounds?.let { box ->
+            val move = overlayMiniMove.value
             val shift = box.center.x - rootSize.width / 2f
-            val offset = -shift * overlayMiniMove.value
-            Rect(box.left + offset, box.top, box.right + offset, box.bottom)
+            val offset = -shift * move
+            // 子页面里迷你播放器会下移到屏幕底部（与 globalMiniTrack 处的 translationY 一致），收回目标也要跟着下移
+            val overlayTop = rootSize.height - navBottomPx - with(density) { 10.dp.toPx() + MiniHeight.toPx() }
+            val dy = (overlayTop - box.top) * move
+            Rect(box.left + offset, box.top + dy, box.right + offset, box.bottom + dy)
         } ?: with(density) {
             val width = rootSize.width.toFloat()
             val height = rootSize.height.toFloat().coerceAtLeast(1f)
