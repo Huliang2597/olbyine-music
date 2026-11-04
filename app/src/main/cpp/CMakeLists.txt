@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(olbyineusb C)
+add_library(olbyineusb SHARED olbyine_usb.c)
+find_library(log-lib log)
+target_link_libraries(olbyineusb ${log-lib})

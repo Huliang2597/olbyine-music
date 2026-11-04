@@ -12,6 +12,7 @@ internal object UsbAudioNative {
 
     @JvmStatic external fun nativeSpeed(fd: Int): Int
     @JvmStatic external fun nativeReattach(fd: Int, interfaceNumber: Int): Int
+    @JvmStatic external fun nativeReset(fd: Int): Int
     @JvmStatic external fun nativeStart(
         fd: Int,
         endpoint: Int,

@@ -37,8 +37,13 @@ internal class UsbDirectAudioOutput private constructor(
         synchronized(stream) { if (!stream.closed) UsbAudioNative.nativeSetPaused(stream.handle, true) }
     }
 
-    override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean =
-        synchronized(stream) { writeLocked(buffer) }
+    override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
+        if (stream.closed) {
+            buffer.position(buffer.limit())
+            return true
+        }
+        return synchronized(stream) { writeLocked(buffer) }
+    }
 
     private fun writeLocked(buffer: ByteBuffer): Boolean {
         if (stream.closed || UsbAudioNative.nativeFailed(stream.handle)) {
@@ -87,7 +92,7 @@ internal class UsbDirectAudioOutput private constructor(
     override fun release() {
         if (released) return
         released = true
-        UsbAudioDriver.closeStream(stream)
+        Thread({ runCatching { UsbAudioDriver.closeStream(stream) } }, "usb-close-stream").start()
         listeners.forEach { it.onReleased() }
     }
 

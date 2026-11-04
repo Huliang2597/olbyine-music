@@ -38,9 +38,24 @@ data class Track(
     val bitsPerSample: Int = 0,
     val bitrate: Int = 0,
     val artworkUrl: String? = null,
+    val cueStartMs: Long = 0L,
+    val cueEndMs: Long = 0L,
 ) {
     val hasLyrics: Boolean
-        get() = lyricsInstrumental || storedLyrics || !lyrics.isNullOrBlank() || !wordLyrics.isNullOrBlank()
+        get() = lyricsInstrumental || hasLyricContent(lyrics) || hasLyricContent(wordLyrics)
+
+    private fun hasLyricContent(text: String?): Boolean {
+        val raw = text?.trim().orEmpty()
+        if (raw.isEmpty()) return false
+        return when (raw.first()) {
+            '{' -> LyricsParser.sanitize(raw).isNotBlank()
+            '[' -> {
+                val next = raw.drop(1).trimStart().firstOrNull() ?: return false
+                if (next != '{' && next != '"') true else LyricsParser.sanitize(raw).isNotBlank()
+            }
+            else -> true
+        }
+    }
 
     val isOnline: Boolean get() = uri.startsWith("ncm://") || uri.startsWith("sc://") || uri.startsWith("kw://") || id.startsWith("nd:")
 
@@ -166,6 +181,7 @@ data class UserSettings(
     val hapticAreas: Int = HapticArea.DEFAULT,
     val artworkBackdrop: Boolean = true,
     val playerFx: Int = PlayerFx.DEFAULT,
+    val playerButtons: Int = PlayerButtons.DEFAULT,
     val notificationLyrics: Boolean = false,
     val bluetoothLyrics: Boolean = false,
     val floatingLyrics: Boolean = false,
@@ -194,6 +210,11 @@ data class UserSettings(
     val autoUpdateCheck: Boolean = true,
     val neteaseQuality: String = "exhigh",
     val playerFullscreen: String = "off",
+    val keepScreenOn: Boolean = false,
+    val multiAppPlayback: Boolean = false,
+    val startPage: String = "library",
+    val startLibrarySection: String = "ALL",
+    val startStreamingProvider: String = "netease",
 )
 
 object HapticArea {
@@ -243,6 +264,32 @@ object PlayerFx {
         Triple(GRADUAL_BLUR, "底部渐进模糊", "页面滚到底栏下面时逐渐失焦，越靠近底边越模糊（GradualBlur）"),
         Triple(SHREDDER, "队列碎纸机", "播放队列里长按一首歌拖进底部的缝里，它会被切成纸条卷着落下并移出队列（Shredder）"),
         Triple(BOUNCE_CARDS, "弹跳封面", "歌单和文件夹页顶部的封面像一叠照片弹出、展开，按住一张会摆正抬起（BounceCards）"),
+    )
+}
+
+object PlayerButtons {
+    const val PREVIOUS = 1
+    const val PLAY = 2
+    const val NEXT = 4
+    const val MODE = 8
+    const val FAVORITE = 16
+    const val FOLDER = 32
+    const val QUEUE = 64
+    const val TRANSITION = 128
+    const val SOURCE = 256
+    const val MENU = 512
+    const val DEFAULT = PREVIOUS or PLAY or NEXT or MODE or FAVORITE or FOLDER or QUEUE or TRANSITION or SOURCE or MENU
+
+    val labels = listOf(
+        Triple(PREVIOUS, "上一首", "播放控件左侧的上一首按钮"),
+        Triple(PLAY, "播放 / 暂停", "中间的主按钮"),
+        Triple(NEXT, "下一首", "播放控件右侧的下一首按钮"),
+        Triple(MODE, "播放模式", "随机、列表循环、单曲循环的入口"),
+        Triple(FAVORITE, "收藏", "歌名右侧的红心"),
+        Triple(FOLDER, "在文件夹中显示", "播放控件最右侧的文件夹按钮"),
+        Triple(QUEUE, "播放队列", "底栏打开播放队列的按钮"),
+        Triple(TRANSITION, "歌曲过渡", "底栏切换过渡方式的按钮"),
+        Triple(MENU, "更多菜单", "底栏最左侧的菜单按钮"),
     )
 }
 

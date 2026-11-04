@@ -12,6 +12,10 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.os.PowerManager
+import java.io.File
+import java.io.RandomAccessFile
+import java.nio.channels.FileLock
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -68,11 +72,21 @@ object UsbAudioDriver {
     private var volume: VolumeControl? = null
     private val clockRates = HashMap<Int, List<IntRange>>()
     private val readyListeners = CopyOnWriteArraySet<() -> Unit>()
+    private var retryRunnable: Runnable? = null
+    @Volatile private var closing = false
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var lockHandle: RandomAccessFile? = null
+    private var lockToken: FileLock? = null
 
     @Volatile var softwareGain: Float = 1f
         private set
 
     val enabled: Boolean get() = initialized && runCatching { preferences.getBoolean(PREF_KEY, false) }.getOrDefault(false)
+    val isClosing: Boolean get() = closing
+
+    fun prepareDetach() {
+        closing = true
+    }
 
     val isReady: Boolean
         @Synchronized get() = connection != null && topology != null &&
@@ -134,17 +148,82 @@ object UsbAudioDriver {
         }
         ContextCompat.registerReceiver(appContext, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         _state.value = _state.value.copy(volume = runCatching { preferences.getInt(PREF_VOLUME, DEFAULT_VOLUME) }.getOrDefault(DEFAULT_VOLUME))
-        if (enabled) attach()
+        if (enabled) Thread({ runCatching { attach() } }, "usb-init").start()
     }
 
     fun addReadyListener(listener: () -> Unit) { readyListeners += listener }
     fun removeReadyListener(listener: () -> Unit) { readyListeners -= listener }
+
+    fun ensureAttached() {
+        if (!initialized || !enabled) return
+        Thread({
+            val connected = synchronized(this) { connection != null }
+            if (connected) return@Thread
+            runCatching { attach() }
+            scheduleRetry(0)
+        }, "usb-ensure").start()
+    }
+
+    private fun scheduleRetry(attempt: Int) {
+        if (attempt > 4) return
+        retryRunnable?.let(mainHandler::removeCallbacks)
+        val runnable = Runnable {
+            if (!enabled || isReady || _state.value.status == UsbDriverStatus.NEEDS_PERMISSION) return@Runnable
+            Thread({ runCatching { attach() } }, "usb-retry").start()
+            scheduleRetry(attempt + 1)
+        }
+        retryRunnable = runnable
+        mainHandler.postDelayed(runnable, 800L)
+    }
+
+    @Synchronized
+    private fun acquireOwnerLock(): Boolean {
+        if (lockToken != null) return true
+        return runCatching {
+            val handle = RandomAccessFile(File(appContext.filesDir, "usb_owner.lock"), "rw")
+            val token = handle.channel.tryLock()
+            if (token == null) {
+                runCatching { handle.close() }
+                false
+            } else {
+                lockHandle = handle
+                lockToken = token
+                true
+            }
+        }.getOrDefault(false)
+    }
+
+    @Synchronized
+    private fun releaseOwnerLock() {
+        runCatching { lockToken?.release() }
+        runCatching { lockHandle?.close() }
+        lockToken = null
+        lockHandle = null
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock != null) return
+        val power = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+        wakeLock = runCatching {
+            power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "olbyine:usb-exclusive").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }.getOrNull()
+    }
+
+    private fun releaseWakeLock() {
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+        wakeLock = null
+    }
 
     private fun notifyReadyChanged() = mainHandler.post { readyListeners.forEach { it() } }
 
     @Synchronized
     fun attach() {
         if (!initialized || !enabled || connection != null) return
+        closing = false
+        Log.i(TAG, "attach: enabled=$enabled connected=${connection != null} status=${_state.value.status}")
         if (!UsbAudioNative.available) {
             publish(UsbDriverStatus.ERROR, detail = "USB 驱动组件加载失败")
             return
@@ -170,14 +249,21 @@ object UsbAudioDriver {
     private fun open(target: UsbDevice) {
         if (connection != null) return
         val name = target.productName ?: "USB DAC"
+        if (!acquireOwnerLock()) {
+            Log.w(TAG, "owner lock held by another process")
+            publish(UsbDriverStatus.ERROR, name, "USB 设备正被另一个 Olbyine 进程使用")
+            return
+        }
         val opened = runCatching { usbManager.openDevice(target) }.getOrNull()
         if (opened == null) {
+            releaseOwnerLock()
             publish(UsbDriverStatus.ERROR, name, "无法打开 USB 设备")
             return
         }
         val parsed = opened.rawDescriptors?.let { runCatching { UacDescriptors.parse(it) }.getOrNull() }
         if (parsed == null || parsed.alts.isEmpty()) {
             opened.close()
+            releaseOwnerLock()
             publish(UsbDriverStatus.UNSUPPORTED, name, "没有找到标准的 USB 音频（UAC）播放接口")
             return
         }
@@ -194,6 +280,7 @@ object UsbAudioDriver {
                 claimed.forEach { UsbAudioNative.nativeReattach(opened.fileDescriptor, it.id) }
                 claimed.clear()
                 opened.close()
+                releaseOwnerLock()
                 publish(UsbDriverStatus.ERROR, name, "无法独占 USB 接口（可能被其他应用占用）")
                 return
             }
@@ -214,17 +301,23 @@ object UsbAudioDriver {
             capabilities = describeCapabilities(parsed),
             detail = if (volume == null) "设备没有硬件音量，使用软件音量（音量低于 100% 时不再比特精确）" else null,
         )
+        acquireWakeLock()
         notifyReadyChanged()
     }
 
     @Synchronized
     fun release(publishOff: Boolean) {
+        closing = true
+        Log.i(TAG, "release(publishOff=$publishOff) status=${_state.value.status}")
         stopStreamLocked()
         val opened = connection
         if (opened != null) {
             val fd = opened.fileDescriptor
+            claimed.forEach { runCatching { opened.setInterface(it) } }
             claimed.forEach { runCatching { opened.releaseInterface(it) } }
             claimed.forEach { UsbAudioNative.nativeReattach(fd, it.id) }
+            val reset = runCatching { UsbAudioNative.nativeReset(fd) }.getOrDefault(-1)
+            Log.i(TAG, "usb reset result=$reset")
             opened.close()
         }
         claimed.clear()
@@ -233,6 +326,9 @@ object UsbAudioDriver {
         topology = null
         volume = null
         softwareGain = 1f
+        releaseWakeLock()
+        releaseOwnerLock()
+        closing = false
         if (publishOff) publish(if (enabled) UsbDriverStatus.NO_DEVICE else UsbDriverStatus.OFF)
         notifyReadyChanged()
     }
@@ -251,8 +347,12 @@ object UsbAudioDriver {
         if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
         else intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
 
-    @Synchronized
     internal fun openStream(rate: Int, channels: Int, sourceBits: Int): ActiveStream? {
+        if (closing) return null
+        return synchronized(this) { openStreamLocked(rate, channels, sourceBits) }
+    }
+
+    private fun openStreamLocked(rate: Int, channels: Int, sourceBits: Int): ActiveStream? {
         val opened = connection ?: return null
         val parsed = topology ?: return null
         stopStreamLocked()
@@ -312,6 +412,7 @@ object UsbAudioDriver {
     private fun stopStreamLocked() {
         val active = stream ?: return
         stream = null
+        active.closed = true
         synchronized(active) {
             active.closed = true
             UsbAudioNative.nativeStop(active.handle)
@@ -337,6 +438,7 @@ object UsbAudioDriver {
                 release(publishOff = false)
                 publish(UsbDriverStatus.ERROR, detail = "USB 传输中断：$message")
             }
+            if (enabled) mainHandler.postDelayed({ ensureAttached() }, 250L)
         }
     }
 

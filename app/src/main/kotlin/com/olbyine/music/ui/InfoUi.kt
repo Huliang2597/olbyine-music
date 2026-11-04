@@ -95,6 +95,7 @@ internal fun ArtistAlbumPage(
     onSaveAlbum: (title: String, artist: String, description: String, releaseDate: String, image: Uri?) -> Unit,
     onMatch: () -> Unit,
     onArtistHome: ((String) -> Unit)? = null,
+    onOpenAlbum: (() -> Unit)? = null,
     localComposerCount: Int = 0,
     localAlbumCount: Int = 0,
     onLocalComposer: (() -> Unit)? = null,
@@ -242,7 +243,7 @@ internal fun ArtistAlbumPage(
                     .size(112.dp)
                     .shadow(16.dp, RoundedCornerShape(14.dp))
                     .clip(RoundedCornerShape(14.dp))
-                    .clickable { editAlbum = true },
+                    .clickable { if (onOpenAlbum != null) onOpenAlbum() else editAlbum = true },
             ) {
                 val albumCover = album?.coverPath
                 if (albumCover != null) {
@@ -260,6 +261,11 @@ internal fun ArtistAlbumPage(
                     color = ink,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = if (onOpenAlbum != null) {
+                        Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpenAlbum)
+                    } else {
+                        Modifier
+                    },
                 )
                 Text(track.artist, style = MaterialTheme.typography.bodyMedium, color = ink.copy(alpha = .7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val facts = listOfNotNull(

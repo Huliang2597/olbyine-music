@@ -5,11 +5,14 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,6 +47,8 @@ class MusicLibraryRepository(private val context: Context) {
     val tracks: StateFlow<List<Track>> = _tracks.asStateFlow()
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists.asStateFlow()
+    private val _streamedTracks = MutableStateFlow<List<Track>>(emptyList())
+    val streamedTracks: StateFlow<List<Track>> = _streamedTracks.asStateFlow()
     private val _loaded = MutableStateFlow(false)
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
     private val _lyricsRevision = MutableStateFlow(0L)
@@ -68,8 +73,47 @@ class MusicLibraryRepository(private val context: Context) {
     }
 
     suspend fun importAudio(uris: List<Uri>, options: ImportOptions = ImportOptions()): ImportReport = withContext(Dispatchers.IO) {
-        val candidates = uris.distinct().map { uri ->
-            ImportCandidate(uri, displayName(uri), querySize(uri), context.contentResolver.getType(uri), null, null, null, persist = true)
+        val unique = uris.distinct()
+        val cueUris = unique.filter { displayName(it).endsWith(".cue", ignoreCase = true) }
+        val audioUris = unique.filter { !displayName(it).endsWith(".cue", ignoreCase = true) }
+        val candidates = mutableListOf<ImportCandidate>()
+        val consumed = mutableSetOf<String>()
+        for (cueUri in cueUris) {
+            val sheet = readCueUri(cueUri) ?: continue
+            if (sheet.tracks.isEmpty()) continue
+            val targetName = sheet.tracks.firstNotNullOfOrNull { it.fileName }
+            val audio = audioUris.firstOrNull { targetName != null && displayName(it).equals(targetName, ignoreCase = true) }
+                ?: audioUris.firstOrNull { isSupportedAudio(displayName(it), context.contentResolver.getType(it)) }
+                ?: continue
+            val total = audioDurationMs(audio)
+            consumed += audio.toString()
+            val name = displayName(audio)
+            val size = querySize(audio)
+            val mime = context.contentResolver.getType(audio)
+            sheet.tracks.forEachIndexed { index, entry ->
+                val end = sheet.tracks.getOrNull(index + 1)?.startMs?.takeIf { it > entry.startMs } ?: total
+                if (end <= entry.startMs) return@forEachIndexed
+                candidates += ImportCandidate(
+                    uri = audio,
+                    name = name,
+                    size = size,
+                    mime = mime,
+                    folderId = null,
+                    folderPath = null,
+                    lyricUri = null,
+                    persist = true,
+                    cueIndex = entry.number.takeIf { it > 0 } ?: (index + 1),
+                    cueTitle = entry.title,
+                    cueArtist = entry.performer ?: sheet.performer,
+                    cueAlbum = sheet.title,
+                    cueTrackNumber = entry.number.takeIf { it > 0 } ?: (index + 1),
+                    cueStartMs = entry.startMs,
+                    cueEndMs = end,
+                )
+            }
+        }
+        audioUris.filter { it.toString() !in consumed }.forEach { uri ->
+            candidates += ImportCandidate(uri, displayName(uri), querySize(uri), context.contentResolver.getType(uri), null, null, null, persist = true)
         }
         runImport(candidates, options)
     }
@@ -215,10 +259,45 @@ class MusicLibraryRepository(private val context: Context) {
                 .filter { it.mime != DocumentsContract.Document.MIME_TYPE_DIR && isSupportedLyrics(it.name) }
                 .sortedBy { lyricPriority(it.name) }
                 .groupBy { baseName(it.name).lowercase(Locale.ROOT) }
+            val cueAudio = mutableSetOf<String>()
+            children.filter { it.mime != DocumentsContract.Document.MIME_TYPE_DIR && it.name.endsWith(".cue", ignoreCase = true) }
+                .forEach { cueChild ->
+                    val sheet = readCueSheet(treeUri, cueChild) ?: return@forEach
+                    if (sheet.tracks.isEmpty()) return@forEach
+                    val targetName = sheet.tracks.firstNotNullOfOrNull { it.fileName }
+                    val audio = children.firstOrNull {
+                        it.mime != DocumentsContract.Document.MIME_TYPE_DIR && targetName != null && it.name.equals(targetName, ignoreCase = true)
+                    } ?: children.firstOrNull { it.mime != DocumentsContract.Document.MIME_TYPE_DIR && isSupportedAudio(it.name, it.mime) }
+                    ?: return@forEach
+                    val audioUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, audio.id)
+                    val total = audioDurationMs(audioUri)
+                    cueAudio += audio.name.lowercase(Locale.ROOT)
+                    sheet.tracks.forEachIndexed { index, entry ->
+                        val end = sheet.tracks.getOrNull(index + 1)?.startMs?.takeIf { it > entry.startMs } ?: total
+                        if (end <= entry.startMs) return@forEachIndexed
+                        result += ImportCandidate(
+                            uri = audioUri,
+                            name = audio.name,
+                            size = audio.size,
+                            mime = audio.mime.takeIf(String::isNotBlank),
+                            folderId = folderId,
+                            folderPath = path,
+                            lyricUri = null,
+                            persist = false,
+                            cueIndex = entry.number.takeIf { it > 0 } ?: (index + 1),
+                            cueTitle = entry.title,
+                            cueArtist = entry.performer ?: sheet.performer,
+                            cueAlbum = sheet.title,
+                            cueTrackNumber = entry.number.takeIf { it > 0 } ?: (index + 1),
+                            cueStartMs = entry.startMs,
+                            cueEndMs = end,
+                        )
+                    }
+                }
             for (child in children) {
                 if (child.mime == DocumentsContract.Document.MIME_TYPE_DIR) {
                     if (!child.name.startsWith(".")) queue.add(child.id to "$path/${child.name}")
-                } else if (isSupportedAudio(child.name, child.mime)) {
+                } else if (isSupportedAudio(child.name, child.mime) && child.name.lowercase(Locale.ROOT) !in cueAudio) {
                     result += ImportCandidate(
                         uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, child.id),
                         name = child.name,
@@ -237,6 +316,25 @@ class MusicLibraryRepository(private val context: Context) {
         return result
     }
 
+    private fun readCueUri(uri: Uri): CueSheet? = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { stream -> CueSheet.decode(stream.readBytes()) }
+    }.getOrNull()
+
+    private fun readCueSheet(treeUri: Uri, child: TreeChild): CueSheet? = runCatching {
+        context.contentResolver.openInputStream(DocumentsContract.buildDocumentUriUsingTree(treeUri, child.id))
+            ?.use { stream -> CueSheet.decode(stream.readBytes()) }
+    }.getOrNull()
+
+    private fun audioDurationMs(uri: Uri): Long = runCatching {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } finally {
+            retriever.release()
+        }
+    }.getOrDefault(0L)
+
     private suspend fun runImport(
         candidates: List<ImportCandidate>,
         options: ImportOptions,
@@ -249,9 +347,10 @@ class MusicLibraryRepository(private val context: Context) {
             val existing = mutex.withLock { queryAll() }
             val known = DuplicateIndex(existing)
             val fresh = mutableListOf<ImportCandidate>()
-            for (candidate in candidates.distinctBy { it.uri.toString() }) {
+            for (candidate in candidates.distinctBy { if (it.cueIndex > 0) "${it.uri}#cue=${it.cueIndex}" else it.uri.toString() }) {
+                val candidateUri = if (candidate.cueIndex > 0) "${candidate.uri}#cue=${candidate.cueIndex}" else candidate.uri.toString()
                 when {
-                    known.hasUri(candidate.uri.toString()) -> {
+                    known.hasUri(candidateUri) -> {
                         candidate.folderId?.let { folderId ->
                             mutex.withLock {
                                 helper.writableDatabase.update(
@@ -267,7 +366,7 @@ class MusicLibraryRepository(private val context: Context) {
                         }
                         skipped++
                     }
-                    options.skipDuplicates && known.hasFile(candidate.name, candidate.size) -> skipped++
+                    options.skipDuplicates && candidate.cueIndex == 0 && known.hasFile(candidate.name, candidate.size) -> skipped++
                     else -> {
                         fresh += candidate
                         known.addFile(candidate.name, candidate.size)
@@ -302,10 +401,17 @@ class MusicLibraryRepository(private val context: Context) {
                     try {
                         read.forEach { (candidate, outcome) ->
                             val index = order++
-                            val metadata = outcome.getOrElse { error ->
+                            val raw = outcome.getOrElse { error ->
                                 errors += "${candidate.name}：${error.message ?: "无法读取"}"
                                 return@forEach
                             }
+                            val metadata = if (candidate.cueIndex > 0) raw.copy(
+                                title = candidate.cueTitle ?: raw.title,
+                                artist = candidate.cueArtist ?: raw.artist,
+                                album = candidate.cueAlbum ?: raw.album,
+                                durationMs = (candidate.cueEndMs - candidate.cueStartMs).coerceAtLeast(0L),
+                                trackNumber = candidate.cueTrackNumber,
+                            ) else raw
                             if (metadata.hasVideo) {
                                 filtered++
                                 return@forEach
@@ -318,7 +424,8 @@ class MusicLibraryRepository(private val context: Context) {
                                 skipped++
                                 return@forEach
                             }
-                            val id = sha256(candidate.uri.toString())
+                            val id = if (candidate.cueIndex > 0) sha256("${candidate.uri}#cue=${candidate.cueIndex}")
+                            else sha256(candidate.uri.toString())
                             val inserted = runCatching {
                                 insertTrack(db, id, candidate, metadata, addedAt = now + index)
                             }.onFailure { error ->
@@ -350,13 +457,9 @@ class MusicLibraryRepository(private val context: Context) {
     }
 
     private fun insertTrack(db: SQLiteDatabase, id: String, candidate: ImportCandidate, metadata: Metadata, addedAt: Long) {
-        val coverPath = metadata.picture?.takeIf { it.size <= MAX_COVER_BYTES }?.let { bytes ->
-            val directory = File(context.filesDir, "covers").apply { mkdirs() }
-            File(directory, "$id.cover").also { it.writeBytes(bytes) }.absolutePath
-        }
         val values = ContentValues().apply {
             put(COL_ID, id)
-            put(COL_URI, candidate.uri.toString())
+            put(COL_URI, if (candidate.cueIndex > 0) "${candidate.uri}#cue=${candidate.cueIndex}" else candidate.uri.toString())
             put(COL_TITLE, metadata.title)
             put(COL_ARTIST, metadata.artist)
             put(COL_ALBUM, metadata.album)
@@ -364,13 +467,15 @@ class MusicLibraryRepository(private val context: Context) {
             put(COL_DISPLAY_NAME, candidate.name)
             put(COL_MIME, candidate.mime)
             put(COL_SIZE, candidate.size.takeIf { it > 0 } ?: querySize(candidate.uri))
-            put(COL_COVER, coverPath)
+            putNull(COL_COVER)
             put(COL_LYRICS_INSTRUMENTAL, 0)
             put(COL_LYRICS_LOOKUP_AT, 0L)
             put(COL_FAVORITE, 0)
             put(COL_ADDED_AT, addedAt)
             put(COL_FOLDER_ID, candidate.folderId)
             put(COL_FOLDER_PATH, candidate.folderPath)
+            put(COL_CUE_START, candidate.cueStartMs)
+            put(COL_CUE_END, candidate.cueEndMs)
             putTags(metadata)
         }
         db.insertOrThrow(TABLE_TRACKS, null, values)
@@ -506,6 +611,13 @@ class MusicLibraryRepository(private val context: Context) {
         val folderPath: String?,
         val lyricUri: Uri?,
         val persist: Boolean,
+        val cueIndex: Int = 0,
+        val cueTitle: String? = null,
+        val cueArtist: String? = null,
+        val cueAlbum: String? = null,
+        val cueTrackNumber: Int = 0,
+        val cueStartMs: Long = 0L,
+        val cueEndMs: Long = 0L,
     )
 
     suspend fun importLyrics(uris: List<Uri>, preferredTrackId: String? = null): ImportReport =
@@ -664,8 +776,7 @@ class MusicLibraryRepository(private val context: Context) {
         require(bytes.size in 1..MAX_COVER_BYTES) { "封面图片无效" }
         mutex.withLock {
             val previous = queryAll().firstOrNull { it.id == id }?.coverPath
-            val directory = File(context.filesDir, "covers").apply { mkdirs() }
-            val file = File(directory, "$id-${System.currentTimeMillis()}.cover").also { it.writeBytes(bytes) }
+            val file = File(storeUserCover(bytes) ?: throw IllegalArgumentException("封面图片无效"))
             helper.writableDatabase.update(
                 TABLE_TRACKS,
                 ContentValues().apply { put(COL_COVER, file.absolutePath) },
@@ -769,6 +880,10 @@ class MusicLibraryRepository(private val context: Context) {
             check(helper.writableDatabase.delete(TABLE_PLAYLISTS, "$COL_ID = ?", arrayOf(id)) == 1) {
                 "歌单不存在"
             }
+            helper.writableDatabase.execSQL(
+                "DELETE FROM $TABLE_TRACKS WHERE $COL_STREAMED = 1 AND $COL_ID NOT IN " +
+                    "(SELECT DISTINCT $COL_TRACK_ID FROM $TABLE_PLAYLIST_TRACKS)",
+            )
             refreshLocked()
         }
     }
@@ -797,6 +912,75 @@ class MusicLibraryRepository(private val context: Context) {
         }
     }
 
+    suspend fun addStreamedToPlaylist(id: String, tracks: List<Track>): Int = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (tracks.isEmpty()) return@withLock 0
+            val db = helper.writableDatabase
+            requirePlaylistExists(db, id)
+            var nextOrder = db.rawQuery(
+                "SELECT COALESCE(MAX($COL_SORT_ORDER), -1) + 1 FROM $TABLE_PLAYLIST_TRACKS WHERE $COL_PLAYLIST_ID = ?",
+                arrayOf(id),
+            ).use { cursor -> cursor.moveToFirst(); cursor.getInt(0) }
+            var added = 0
+            db.beginTransaction()
+            try {
+                tracks.distinctBy(Track::id).forEach { track ->
+                    db.insertWithOnConflict(TABLE_TRACKS, null, streamedValues(track), SQLiteDatabase.CONFLICT_IGNORE)
+                    val artwork = track.artworkUrl
+                    if (!artwork.isNullOrBlank()) {
+                        db.update(
+                            TABLE_TRACKS,
+                            ContentValues().apply { put(COL_ARTWORK_URL, artwork) },
+                            "$COL_ID = ? AND ($COL_ARTWORK_URL IS NULL OR $COL_ARTWORK_URL = '')",
+                            arrayOf(track.id),
+                        )
+                    }
+                    val inserted = db.insertWithOnConflict(
+                        TABLE_PLAYLIST_TRACKS,
+                        null,
+                        ContentValues().apply {
+                            put(COL_PLAYLIST_ID, id)
+                            put(COL_TRACK_ID, track.id)
+                            put(COL_SORT_ORDER, nextOrder)
+                        },
+                        SQLiteDatabase.CONFLICT_IGNORE,
+                    )
+                    if (inserted != -1L) {
+                        added += 1
+                        nextOrder += 1
+                    }
+                }
+                if (added > 0) touchPlaylist(db, id)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+            refreshLocked()
+            added
+        }
+    }
+
+    private fun streamedValues(track: Track): ContentValues = ContentValues().apply {
+        put(COL_ID, track.id)
+        put(COL_URI, track.uri)
+        put(COL_TITLE, track.title)
+        put(COL_ARTIST, track.artist)
+        put(COL_ALBUM, track.album)
+        put(COL_DURATION, track.durationMs)
+        put(COL_DISPLAY_NAME, track.displayName)
+        put(COL_MIME, track.mimeType)
+        put(COL_SIZE, track.sizeBytes)
+        put(COL_ARTWORK_URL, track.artworkUrl)
+        put(COL_LYRICS_INSTRUMENTAL, if (track.lyricsInstrumental) 1 else 0)
+        put(COL_LYRICS_LOOKUP_AT, 0L)
+        put(COL_FAVORITE, if (track.favorite) 1 else 0)
+        put(COL_ADDED_AT, System.currentTimeMillis())
+        put(COL_PLAY_COUNT, track.playCount)
+        put(COL_LAST_PLAYED, track.lastPlayedAt)
+        put(COL_STREAMED, 1)
+        put(COL_TAGS_SCANNED, 1)
+    }
+
     suspend fun removeFromPlaylist(id: String, trackId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val db = helper.writableDatabase
@@ -806,7 +990,14 @@ class MusicLibraryRepository(private val context: Context) {
                     "$COL_PLAYLIST_ID = ? AND $COL_TRACK_ID = ?",
                     arrayOf(id, trackId),
                 ) > 0
-            ) touchPlaylist(db, id)
+            ) {
+                touchPlaylist(db, id)
+                db.execSQL(
+                    "DELETE FROM $TABLE_TRACKS WHERE $COL_STREAMED = 1 AND $COL_ID = ? AND $COL_ID NOT IN " +
+                        "(SELECT DISTINCT $COL_TRACK_ID FROM $TABLE_PLAYLIST_TRACKS)",
+                    arrayOf(trackId),
+                )
+            }
             refreshLocked()
         }
     }
@@ -901,10 +1092,6 @@ class MusicLibraryRepository(private val context: Context) {
             )
         }
         val id = sha256(uriText)
-        val coverPath = metadata.picture?.takeIf { it.size <= MAX_COVER_BYTES }?.let { bytes ->
-            val directory = File(context.filesDir, "covers").apply { mkdirs() }
-            File(directory, "$id.cover").also { it.writeBytes(bytes) }.absolutePath
-        }
         val values = ContentValues().apply {
             put(COL_ID, id)
             put(COL_URI, uriText)
@@ -915,7 +1102,7 @@ class MusicLibraryRepository(private val context: Context) {
             put(COL_DISPLAY_NAME, name)
             put(COL_MIME, mime)
             put(COL_SIZE, querySize(uri))
-            put(COL_COVER, coverPath)
+            putNull(COL_COVER)
             putNull(COL_LYRICS)
             putNull(COL_WORD_LYRICS)
             putNull(COL_TRANSLATION_LYRICS)
@@ -1269,6 +1456,71 @@ class MusicLibraryRepository(private val context: Context) {
         .lowercase(Locale.ROOT)
         .replace(Regex("[\\s_\\-–—.·]+"), "")
 
+    private fun shrinkCover(raw: ByteArray): ByteArray? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        if (raw.size <= COVER_COMPACT_BYTES && longest <= COVER_EDGE) return raw
+        var sample = 1
+        while (longest / (sample * 2) >= COVER_EDGE) sample *= 2
+        val decoded = BitmapFactory.decodeByteArray(
+            raw, 0, raw.size, BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: return null
+        val ratio = minOf(1f, COVER_EDGE.toFloat() / maxOf(decoded.width, decoded.height))
+        val scaled = if (ratio in 0f..0.999f) Bitmap.createScaledBitmap(
+            decoded,
+            (decoded.width * ratio).roundToInt().coerceAtLeast(1),
+            (decoded.height * ratio).roundToInt().coerceAtLeast(1),
+            true,
+        ) else decoded
+        val out = ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, COVER_QUALITY, out)
+        if (scaled !== decoded) scaled.recycle()
+        decoded.recycle()
+        return out.toByteArray().takeIf { it.isNotEmpty() }?.takeIf { it.size < raw.size } ?: raw
+    }
+
+    private fun storeUserCover(raw: ByteArray): String? {
+        val bytes = shrinkCover(raw) ?: return null
+        val directory = File(context.filesDir, "user-covers").apply { mkdirs() }
+        val file = File(directory, sha256Bytes(bytes) + ".cover")
+        if (!file.exists() || file.length() != bytes.size.toLong()) file.writeBytes(bytes)
+        return file.absolutePath
+    }
+
+    suspend fun dropStoredCovers(): Long = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val directory = File(context.filesDir, "covers")
+            val extracted = directory.listFiles()?.filter { it.isFile }.orEmpty()
+            if (extracted.isEmpty()) return@withLock 0L
+            val db = helper.writableDatabase
+            var freed = 0L
+            extracted.forEach { file ->
+                db.update(
+                    TABLE_TRACKS,
+                    ContentValues().apply { putNull(COL_COVER) },
+                    "$COL_COVER = ?",
+                    arrayOf(file.absolutePath),
+                )
+                freed += file.length()
+                file.delete()
+            }
+            directory.delete()
+            refreshLocked()
+            freed
+        }
+    }
+
+    fun storedCoverBytes(): Long = File(context.filesDir, "covers")
+        .walkTopDown()
+        .filter { it.isFile }
+        .sumOf { it.length() }
+
+    private fun sha256Bytes(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { "%02x".format(it) }
+
     private fun deleteUnusedCover(path: String) {
         val inUse = queryAll().any { it.coverPath == path }
         if (!inUse) File(path).delete()
@@ -1346,6 +1598,7 @@ class MusicLibraryRepository(private val context: Context) {
 
     private fun refreshLocked() {
         _tracks.value = queryAll()
+        _streamedTracks.value = queryStreamed()
         _playlists.value = queryPlaylists()
         _lyricsRevision.value = _lyricsRevision.value + 1
     }
@@ -1370,19 +1623,27 @@ class MusicLibraryRepository(private val context: Context) {
         }
     }
 
-    private fun queryAll(): List<Track> = helper.readableDatabase.rawQuery(
+    private fun queryTracks(where: String): List<Track> = helper.readableDatabase.rawQuery(
         "SELECT $COL_ID, $COL_URI, $COL_TITLE, $COL_ARTIST, $COL_ALBUM, $COL_DURATION, $COL_DISPLAY_NAME, " +
             "$COL_MIME, $COL_SIZE, $COL_COVER, $COL_LYRICS_SOURCE, $COL_LYRICS_FORMAT, $COL_LYRICS_CONFIDENCE, " +
             "$COL_LYRICS_INSTRUMENTAL, $COL_LYRICS_LOOKUP_AT, $COL_LYRICS_LOOKUP_STATUS, $COL_FAVORITE, " +
             "$COL_ADDED_AT, $COL_FOLDER_ID, $COL_FOLDER_PATH, $COL_TRACK_NUMBER, $COL_DISC_NUMBER, $COL_YEAR, " +
             "$COL_ALBUM_ARTIST, $COL_COMPOSER, $COL_COMPOSER_CREDIT, $COL_PLAY_COUNT, $COL_LAST_PLAYED, $COL_SAMPLE_RATE, $COL_BITS_PER_SAMPLE, $COL_BITRATE, " +
+            "$COL_ARTWORK_URL, $COL_CUE_START, $COL_CUE_END, " +
             "(COALESCE(length($COL_LYRICS), 0) > 0 OR COALESCE(length($COL_WORD_LYRICS), 0) > 0) AS $COL_HAS_LYRICS " +
-            "FROM $TABLE_TRACKS ORDER BY $COL_ADDED_AT DESC",
+            "FROM $TABLE_TRACKS WHERE $where ORDER BY $COL_ADDED_AT DESC",
         null,
     ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toTrack()) } }
 
+    private fun queryAll(): List<Track> = queryTracks("$COL_STREAMED = 0")
+
+    private fun queryStreamed(): List<Track> = queryTracks("$COL_STREAMED = 1")
+
     private fun Cursor.optionalString(column: String): String? =
         getColumnIndex(column).takeIf { it >= 0 }?.let(::getString)
+
+    private fun Cursor.optionalLong(column: String): Long =
+        getColumnIndex(column).takeIf { it >= 0 }?.let { if (isNull(it)) 0L else getLong(it) } ?: 0L
 
     private fun Cursor.toTrack() = Track(
         id = getString(getColumnIndexOrThrow(COL_ID)),
@@ -1423,6 +1684,9 @@ class MusicLibraryRepository(private val context: Context) {
         sampleRate = getInt(getColumnIndexOrThrow(COL_SAMPLE_RATE)),
         bitsPerSample = getInt(getColumnIndexOrThrow(COL_BITS_PER_SAMPLE)),
         bitrate = getInt(getColumnIndexOrThrow(COL_BITRATE)),
+        artworkUrl = optionalString(COL_ARTWORK_URL),
+        cueStartMs = optionalLong(COL_CUE_START),
+        cueEndMs = optionalLong(COL_CUE_END),
     )
 
     private fun migrateRecoveredAudioIfNeeded() {
@@ -1487,7 +1751,11 @@ class MusicLibraryRepository(private val context: Context) {
                     $COL_FAVORITE INTEGER NOT NULL DEFAULT 0,
                     $COL_ADDED_AT INTEGER NOT NULL,
                     $COL_FOLDER_ID TEXT,
-                    $COL_FOLDER_PATH TEXT
+                    $COL_FOLDER_PATH TEXT,
+                    $COL_STREAMED INTEGER NOT NULL DEFAULT 0,
+                    $COL_ARTWORK_URL TEXT,
+                    $COL_CUE_START INTEGER NOT NULL DEFAULT 0,
+                    $COL_CUE_END INTEGER NOT NULL DEFAULT 0
                 )
                 """.trimIndent(),
             )
@@ -1521,6 +1789,14 @@ class MusicLibraryRepository(private val context: Context) {
             if (oldVersion == 4) db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_COMPOSER TEXT")
             if (oldVersion in 4..7) db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_COMPOSER_CREDIT TEXT")
             if (oldVersion in 5..7) db.execSQL("UPDATE $TABLE_TRACKS SET $COL_COMPOSER = NULL")
+            if (oldVersion < 9) {
+                db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_STREAMED INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_ARTWORK_URL TEXT")
+            }
+            if (oldVersion < 10) {
+                db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_CUE_START INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE $TABLE_TRACKS ADD COLUMN $COL_CUE_END INTEGER NOT NULL DEFAULT 0")
+            }
         }
 
         private fun addTagColumns(db: SQLiteDatabase) {
@@ -1568,7 +1844,7 @@ class MusicLibraryRepository(private val context: Context) {
 
     internal companion object {
         const val DATABASE_NAME = "olbyine_native.db"
-        const val DATABASE_VERSION = 8
+        const val DATABASE_VERSION = 10
         const val TABLE_TRACKS = "tracks"
         const val TABLE_PLAYLISTS = "playlists"
         const val TABLE_PLAYLIST_TRACKS = "playlist_tracks"
@@ -1609,6 +1885,10 @@ class MusicLibraryRepository(private val context: Context) {
         const val COL_BITS_PER_SAMPLE = "bits_per_sample"
         const val COL_BITRATE = "bitrate"
         const val COL_TAGS_SCANNED = "tags_scanned"
+        const val COL_STREAMED = "streamed"
+        const val COL_ARTWORK_URL = "artwork_url"
+        const val COL_CUE_START = "cue_start_ms"
+        const val COL_CUE_END = "cue_end_ms"
         const val IMPORT_PARALLELISM = 4
         const val IMPORT_BATCH = 64
         const val COL_PLAYLIST_ID = "playlist_id"
@@ -1619,6 +1899,9 @@ class MusicLibraryRepository(private val context: Context) {
         const val COL_UPDATED_AT = "updated_at"
         const val LEGACY_AUDIO_DIR = "olbyine-music"
         const val MAX_COVER_BYTES = 8 * 1024 * 1024
+        const val COVER_EDGE = 1024
+        const val COVER_QUALITY = 88
+        const val COVER_COMPACT_BYTES = 256 * 1024
         const val MAX_LYRIC_BYTES = 4 * 1024 * 1024
 
         val LYRIC_EXTENSIONS = setOf("lrc", "elrc", "yrc", "ttml")

@@ -378,6 +378,11 @@ JNIEXPORT jint JNICALL JNI(nativeReattach)(JNIEnv *env, jclass clazz, jint fd, j
     return ioctl(fd, USBDEVFS_IOCTL, &command) < 0 ? -errno : 0;
 }
 
+JNIEXPORT jint JNICALL JNI(nativeReset)(JNIEnv *env, jclass clazz, jint fd) {
+    if (ioctl(fd, USBDEVFS_RESET, 0) < 0) return -errno;
+    return 0;
+}
+
 JNIEXPORT jlong JNICALL JNI(nativeStart)(
     JNIEnv *env, jclass clazz, jint fd, jint endpoint, jint max_packet, jint packets_per_sec,
     jint subslot, jint bits, jint channels, jint rate, jint in_rate, jint fb_endpoint, jint fb_size,

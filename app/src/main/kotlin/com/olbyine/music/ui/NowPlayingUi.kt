@@ -421,13 +421,15 @@ private fun PlayerBody(
                 onModeButton = onModeButton,
                 modeEnabled = listening == null,
                 trailing = {
-                        SideGlyph(
-                            Icons.Rounded.FolderOpen,
-                            "在文件夹中显示",
-                            onRevealInLibrary,
-                            glass,
-                            enabled = listening == null,
-                        )
+                        HeldSlot(playerButton(com.olbyine.music.data.PlayerButtons.FOLDER)) {
+                            SideGlyph(
+                                Icons.Rounded.FolderOpen,
+                                "在文件夹中显示",
+                                onRevealInLibrary,
+                                glass,
+                                enabled = listening == null,
+                            )
+                        }
                     },
             )
             AnimatedVisibility(
@@ -566,13 +568,15 @@ private fun LandscapePlayerBody(
                     modeEnabled = listening == null,
                     playSize = if (height > 300.dp) 62.dp else 54.dp,
                     trailing = {
-                        SideGlyph(
-                            Icons.Rounded.FolderOpen,
-                            "在文件夹中显示",
-                            onRevealInLibrary,
-                            glass,
-                            enabled = listening == null,
-                        )
+                        HeldSlot(playerButton(com.olbyine.music.data.PlayerButtons.FOLDER)) {
+                            SideGlyph(
+                                Icons.Rounded.FolderOpen,
+                                "在文件夹中显示",
+                                onRevealInLibrary,
+                                glass,
+                                enabled = listening == null,
+                            )
+                        }
                     },
                 )
                 UtilityRow(
@@ -1153,58 +1157,48 @@ private fun TrackTitleRow(track: Track, onFavorite: (() -> Unit)?, onComposer: (
             )
         }
         if (onFavorite != null) {
-            Spacer(Modifier.width(10.dp))
-            val openNcm = LocalNeteaseComments.current
-            val openSc = LocalScComments.current
-            val comments: (() -> Unit)? = when {
-                track.id.startsWith("ncm:") -> track.id.removePrefix("ncm:").toLongOrNull()?.let { id -> openNcm?.let { { it(id, track.title) } } }
-                track.id.startsWith("sc:") -> track.id.removePrefix("sc:").toLongOrNull()?.let { id -> openSc?.let { { it(id, track.title) } } }
-                else -> null
-            }
-            if (comments != null) {
-                Box(
-                    Modifier.size(46.dp).clip(CircleShape).pressable(pressedScale = .8f, label = "评论", onClick = comments),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    StyledIcon(Icons.Rounded.ChatBubbleOutline, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onBackground.copy(alpha = .72f))
+            HeldSlot(playerButton(com.olbyine.music.data.PlayerButtons.FAVORITE)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.width(10.dp))
+                    val openNcm = LocalNeteaseComments.current
+                    val openSc = LocalScComments.current
+                    val comments: (() -> Unit)? = when {
+                        track.id.startsWith("ncm:") -> track.id.removePrefix("ncm:").toLongOrNull()?.let { id -> openNcm?.let { { it(id, track.title) } } }
+                        track.id.startsWith("sc:") -> track.id.removePrefix("sc:").toLongOrNull()?.let { id -> openSc?.let { { it(id, track.title) } } }
+                        else -> null
+                    }
+                    if (comments != null) {
+                        Box(
+                            Modifier.size(46.dp).clip(CircleShape).pressable(pressedScale = .8f, label = "评论", onClick = comments),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            StyledIcon(Icons.Rounded.ChatBubbleOutline, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onBackground.copy(alpha = .72f))
+                        }
+                    }
+                    val lookup = LocalStreamLikeCount.current
+                    val base by androidx.compose.runtime.produceState<Long?>(null, track.id) {
+                        value = if (lookup != null && track.isOnline) runCatching { lookup(track) }.getOrNull() else null
+                    }
+                    val likedAtLoad = remember(track.id, base) { track.favorite }
+                    val count = base?.let { it + (if (track.favorite) 1 else 0) - (if (likedAtLoad) 1 else 0) }?.coerceAtLeast(0)
+                    val tint = MaterialTheme.colorScheme.onBackground
+                    HeartWithMenu(
+                        track = { track },
+                        liked = track.favorite,
+                        onToggle = onFavorite,
+                        count = count,
+                        likedColor = MaterialTheme.colorScheme.primary,
+                        idleColor = tint.copy(alpha = .72f),
+                        textColor = tint.copy(alpha = .72f),
+                        iconSize = 26.dp,
+                        minSize = 46.dp,
+                        showQueueActions = false,
+                    )
                 }
-            }
-            val lookup = LocalStreamLikeCount.current
-            val base by androidx.compose.runtime.produceState<Long?>(null, track.id) {
-                value = if (lookup != null && track.isOnline) runCatching { lookup(track) }.getOrNull() else null
-            }
-            val likedAtLoad = remember(track.id, base) { track.favorite }
-            val count = base?.let { it + (if (track.favorite) 1 else 0) - (if (likedAtLoad) 1 else 0) }?.coerceAtLeast(0)
-            if (track.isOnline) {
-                val tint = MaterialTheme.colorScheme.onBackground
-                HeartWithMenu(
-                    track = { track },
-                    liked = track.favorite,
-                    onToggle = onFavorite,
-                    count = count,
-                    likedColor = MaterialTheme.colorScheme.primary,
-                    idleColor = tint.copy(alpha = .72f),
-                    textColor = tint.copy(alpha = .72f),
-                    iconSize = 26.dp,
-                    minSize = 46.dp,
-                    showQueueActions = false,
-                )
-            } else {
-                HeartWithMenu(
-                    track = { track },
-                    liked = track.favorite,
-                    onToggle = onFavorite,
-                    count = count,
-                    likedColor = MaterialTheme.colorScheme.primary,
-                    idleColor = MaterialTheme.colorScheme.onBackground.copy(alpha = .72f),
-                    textColor = MaterialTheme.colorScheme.onBackground.copy(alpha = .72f),
-                    iconSize = 26.dp,
-                    minSize = 46.dp,
-                    showQueueActions = false,
-                )
             }
         }
     }
+
     val picks = composerPick
     if (picks != null) {
         androidx.compose.runtime.LaunchedEffect(picks) {
@@ -1445,31 +1439,41 @@ internal fun TransportControls(
 ) {
     val ink = MaterialTheme.colorScheme.onBackground
     val kind = LocalStyleSpec.current.transport
+    val showPrev = playerButton(com.olbyine.music.data.PlayerButtons.PREVIOUS)
+    val showPlay = playerButton(com.olbyine.music.data.PlayerButtons.PLAY)
+    val showNext = playerButton(com.olbyine.music.data.PlayerButtons.NEXT)
+    val showMode = modeEnabled && playerButton(com.olbyine.music.data.PlayerButtons.MODE)
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (modeEnabled) ModeButton(playback.playMode(), glass, onModeButton) else Spacer(Modifier.size(46.dp))
-        if (glass && kind == TransportKind.GLYPHS) {
+        HeldSlot(showMode) { ModeButton(playback.playMode(), glass, onModeButton) }
+        if (glass && kind == TransportKind.GLYPHS && showPrev && showPlay && showNext) {
             TransportCapsule(playback, onToggle, onPrevious, onNext, height = playSize * .92f)
         } else {
-            GlyphButton(Icons.Rounded.FastRewind, "上一首", onPrevious, size = playSize * .82f, iconSize = playSize * .52f, tint = ink)
-            if (kind == TransportKind.GLYPHS) {
-                GlyphButton(
-                    icon = null,
-                    description = if (playback.isPlaying) "暂停" else "播放",
-                    onClick = onToggle,
-                    size = playSize,
-                    iconSize = playSize * .66f,
-                    tint = ink,
-                ) {
-                    PlayPauseGlyph(playback, playSize * .7f, ink)
-                }
-            } else {
-                SolidPlayButton(kind, playback, onToggle, playSize)
+            HeldSlot(showPrev) {
+                GlyphButton(Icons.Rounded.FastRewind, "上一首", onPrevious, size = playSize * .82f, iconSize = playSize * .52f, tint = ink)
             }
-            GlyphButton(Icons.Rounded.FastForward, "下一首", onNext, size = playSize * .82f, iconSize = playSize * .52f, tint = ink)
+            HeldSlot(showPlay) {
+                if (kind == TransportKind.GLYPHS) {
+                    GlyphButton(
+                        icon = null,
+                        description = if (playback.isPlaying) "暂停" else "播放",
+                        onClick = onToggle,
+                        size = playSize,
+                        iconSize = playSize * .66f,
+                        tint = ink,
+                    ) {
+                        PlayPauseGlyph(playback, playSize * .7f, ink)
+                    }
+                } else {
+                    SolidPlayButton(kind, playback, onToggle, playSize)
+                }
+            }
+            HeldSlot(showNext) {
+                GlyphButton(Icons.Rounded.FastForward, "下一首", onNext, size = playSize * .82f, iconSize = playSize * .52f, tint = ink)
+            }
         }
         trailing()
     }
@@ -1747,6 +1751,16 @@ private fun GlyphButton(
 }
 
 @Composable
+private fun HeldSlot(visible: Boolean, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content = { Row { content() } }) { measurables, constraints ->
+        val placeable = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
+        layout(placeable.width, placeable.height) {
+            if (visible) placeable.place(0, 0)
+        }
+    }
+}
+
+@Composable
 private fun UtilityRow(
     listening: Boolean,
     queueSize: Int,
@@ -1765,13 +1779,19 @@ private fun UtilityRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        menu()
-        if (!listening) TransitionButton(transition, transitionBlocked, onTransition, ink)
-        if (showSource) SourceSwitch(listening, onListening)
+        HeldSlot(playerButton(com.olbyine.music.data.PlayerButtons.MENU)) { menu() }
+        HeldSlot(!listening && playerButton(com.olbyine.music.data.PlayerButtons.TRANSITION)) {
+            TransitionButton(transition, transitionBlocked, onTransition, ink)
+        }
+        if (showSource) {
+            HeldSlot(true) { SourceSwitch(listening, onListening) }
+        }
         if (listening) {
             GhostIconButton(Icons.AutoMirrored.Rounded.OpenInNew, "打开播放器", onOpenExternalApp, size = 46.dp, iconSize = 22.dp, tint = ink)
         } else {
-            GhostIconButton(Icons.AutoMirrored.Rounded.QueueMusic, "播放队列，$queueSize 首", onQueue, size = 46.dp, iconSize = 24.dp, tint = ink, enabled = queueSize > 0)
+            HeldSlot(playerButton(com.olbyine.music.data.PlayerButtons.QUEUE)) {
+                GhostIconButton(Icons.AutoMirrored.Rounded.QueueMusic, "播放队列，$queueSize 首", onQueue, size = 46.dp, iconSize = 24.dp, tint = ink, enabled = queueSize > 0)
+            }
         }
     }
 }

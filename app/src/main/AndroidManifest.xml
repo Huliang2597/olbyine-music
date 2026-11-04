@@ -28,6 +28,11 @@
         android:theme="@style/Theme.Olbyine"
         android:usesCleartextTraffic="true"
         tools:remove="android:appCategory">
+        <provider
+            android:name=".playback.EmbeddedArtworkProvider"
+            android:authorities="${applicationId}.artwork"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

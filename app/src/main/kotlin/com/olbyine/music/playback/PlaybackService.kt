@@ -2,6 +2,7 @@ package com.olbyine.music.playback
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
@@ -52,9 +53,14 @@ class PlaybackService : MediaSessionService() {
     private var exoPlayer: ExoPlayer? = null
     private var sessionPlayer: DacVolumePlayer? = null
     private var floatOutput = false
+    private var audioFocusHandled = true
+    private var usbMode = false
+    private var builtUsbReady = false
+    private var rebuildPending = false
+    private var pendingSwitch = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val handler = Handler(Looper.getMainLooper())
-    private var consecutiveErrors = 0
+    private val errorTimes = ArrayDeque<Long>()
     private val preferences: SharedPreferences by lazy { getSharedPreferences("native_settings", Context.MODE_PRIVATE) }
     private val app: OlbyineApplication get() = application as OlbyineApplication
     private lateinit var notificationProvider: LyricNotificationProvider
@@ -63,7 +69,7 @@ class PlaybackService : MediaSessionService() {
     private val playCounter = PlayCounter()
 
     private val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == UsbAudioDriver.PREF_KEY || key == SettingsRepository.KEY_FLOAT_OUTPUT) rebuildIfNeeded()
+        if (key == UsbAudioDriver.PREF_KEY || key == SettingsRepository.KEY_FLOAT_OUTPUT || key == SettingsRepository.KEY_MULTI_APP_PLAYBACK) scheduleRebuild()
     }
 
     private val driverListener: () -> Unit = {
@@ -74,6 +80,7 @@ class PlaybackService : MediaSessionService() {
             if (fresh > 0) player.setAudioSessionId(fresh)
         }
         sessionPlayer?.notifyDeviceVolume()
+        if (UsbAudioDriver.enabled && UsbAudioDriver.isReady && !builtUsbReady) rebuildIfNeeded()
     }
 
     private val playerListener = object : Player.Listener {
@@ -102,19 +109,29 @@ class PlaybackService : MediaSessionService() {
 
         override fun onPlayerError(error: PlaybackException) {
             val player = exoPlayer ?: return
-            if (consecutiveErrors >= 3) return
-            consecutiveErrors++
-            val hasNext = player.hasNextMediaItem() || player.repeatMode == Player.REPEAT_MODE_ALL && player.mediaItemCount > 1
-            if (!hasNext) return
+            val now = android.os.SystemClock.elapsedRealtime()
+            while (errorTimes.isNotEmpty() && now - errorTimes.first() > 10_000L) errorTimes.removeFirst()
+            if (errorTimes.size >= 3) {
+                runCatching { player.pause() }
+                return
+            }
+            errorTimes.addLast(now)
+            val index = player.currentMediaItemIndex
+            val position = player.currentPosition.coerceAtLeast(0L)
             handler.postDelayed({
-                if (player.hasNextMediaItem()) player.seekToNextMediaItem() else player.seekTo(0, 0L)
-                player.prepare()
-                player.play()
-            }, 600)
+                runCatching {
+                    player.seekTo(index, position)
+                    player.prepare()
+                    player.play()
+                }
+            }, 800L)
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (isPlaying) consecutiveErrors = 0
+            if (!isPlaying) return
+            handler.postDelayed({
+                if (exoPlayer?.isPlaying == true) errorTimes.clear()
+            }, 5_000L)
         }
     }
 
@@ -125,12 +142,15 @@ class PlaybackService : MediaSessionService() {
         notificationProvider = LyricNotificationProvider(this)
         setMediaNotificationProvider(notificationProvider)
         floatOutput = wantsFloatOutput()
+        audioFocusHandled = handlesAudioFocus()
+        usbMode = UsbAudioDriver.enabled
         val player = buildPlayer(floatOutput)
         val wrapped = DacVolumePlayer(player)
         exoPlayer = player
         sessionPlayer = wrapped
         mediaSession = MediaSession.Builder(this, wrapped)
             .setSessionActivity(com.olbyine.music.MainActivity.openPlayerIntent(this))
+            .setBitmapLoader(EmbeddedBitmapLoader(this))
             .build()
         preferences.registerOnSharedPreferenceChangeListener(preferenceListener)
         UsbAudioDriver.addReadyListener(driverListener)
@@ -151,6 +171,9 @@ class PlaybackService : MediaSessionService() {
 
     private fun wantsFloatOutput(): Boolean =
         UsbAudioDriver.enabled || runCatching { preferences.getBoolean(SettingsRepository.KEY_FLOAT_OUTPUT, false) }.getOrDefault(false)
+
+    private fun handlesAudioFocus(): Boolean =
+        !runCatching { preferences.getBoolean(SettingsRepository.KEY_MULTI_APP_PLAYBACK, false) }.getOrDefault(false)
 
     @OptIn(UnstableApi::class)
     private fun dataSourceFactory(): DataSource.Factory {
@@ -237,8 +260,26 @@ class PlaybackService : MediaSessionService() {
     }
 
     @OptIn(UnstableApi::class)
-    private fun renderersFactory(float: Boolean): DefaultRenderersFactory {
+    private fun renderersFactory(float: Boolean, capRate: Int = 0): DefaultRenderersFactory {
         val factory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink {
+                val builder = androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                if (capRate > 0) {
+                    builder.setAudioProcessorChain(
+                        androidx.media3.exoplayer.audio.DefaultAudioSink.DefaultAudioProcessorChain(
+                            androidx.media3.common.audio.SonicAudioProcessor().apply { setOutputSampleRateHz(capRate) },
+                        ),
+                    )
+                }
+                return builder.build()
+            }
+
             override fun buildAudioRenderers(
                 context: Context,
                 extensionRendererMode: Int,
@@ -267,9 +308,9 @@ class PlaybackService : MediaSessionService() {
     }
 
     @OptIn(UnstableApi::class)
-    private fun buildPlayer(float: Boolean): ExoPlayer {
+    private fun buildPlayer(float: Boolean, capRate: Int = 0): ExoPlayer {
         val usbAudio = UsbBitPerfectAudio(this)
-        val player = ExoPlayer.Builder(this, renderersFactory(float))
+        val player = ExoPlayer.Builder(this, renderersFactory(float, capRate))
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory(), extractorsFactory()))
             .setAudioOutputProvider(usbAudio.outputProvider)
             .setAudioAttributes(
@@ -277,7 +318,7 @@ class PlaybackService : MediaSessionService() {
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .setUsage(C.USAGE_MEDIA)
                     .build(),
-                true,
+                handlesAudioFocus(),
             )
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -333,23 +374,75 @@ class PlaybackService : MediaSessionService() {
             .build()
     }
 
+    private fun scheduleRebuild() {
+        if (rebuildPending) return
+        rebuildPending = true
+        handler.postDelayed({ rebuildPending = false; rebuildIfNeeded() }, 150L)
+    }
+
     @OptIn(UnstableApi::class)
     private fun rebuildIfNeeded() {
         val want = wantsFloatOutput()
-        if (want == floatOutput) return
+        val wantFocus = handlesAudioFocus()
+        val wantUsb = UsbAudioDriver.enabled
+        if (want == floatOutput && wantFocus == audioFocusHandled && wantUsb == usbMode) return
+        val leavingUsb = usbMode && !wantUsb
         floatOutput = want
+        audioFocusHandled = wantFocus
+        usbMode = wantUsb
+        if (leavingUsb) {
+            if (pendingSwitch) return
+            pendingSwitch = true
+            val resume = exoPlayer?.playWhenReady ?: false
+            exoPlayer?.pause()
+            UsbAudioDriver.prepareDetach()
+            Thread({ runCatching { UsbAudioDriver.release(publishOff = true) } }, "usb-mode-switch").start()
+            awaitUsbRestored(want, resume, 0)
+            return
+        }
+        rebuildPlayer(want, preferUsb = wantUsb)
+    }
+
+    private fun awaitUsbRestored(float: Boolean, resume: Boolean, attempt: Int) {
+        val usb = findUsbOutputDevice()
+        if (usb != null || attempt >= 24) {
+            handler.postDelayed({
+                pendingSwitch = false
+                rebuildPlayer(float, preferUsb = false, resume = resume, capRate = 48_000)
+            }, 300L)
+            return
+        }
+        handler.postDelayed({ awaitUsbRestored(float, resume, attempt + 1) }, 150L)
+    }
+
+    private fun findUsbOutputDevice(): AudioDeviceInfo? {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return null
+        return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun rebuildPlayer(float: Boolean, preferUsb: Boolean = false, resume: Boolean? = null, capRate: Int = 0) {
         val session = mediaSession ?: return
         val old = exoPlayer ?: return
         val items = (0 until old.mediaItemCount).map(old::getMediaItemAt)
         val index = old.currentMediaItemIndex
         val position = old.currentPosition
-        val playWhenReady = old.playWhenReady
+        val playWhenReady = resume ?: old.playWhenReady
         val repeat = old.repeatMode
         val shuffle = old.shuffleModeEnabled
         val parameters = old.playbackParameters
         old.pause()
         old.removeListener(playerListener)
-        val fresh = buildPlayer(want)
+        usbBitPerfectAudio?.close()
+        usbBitPerfectAudio = null
+        old.stop()
+        handler.postDelayed({ runCatching { old.release() } }, 1_500L)
+        val fresh = buildPlayer(float, capRate)
+        if (preferUsb) findUsbOutputDevice()?.let { fresh.setPreferredAudioDevice(it) }
         if (items.isNotEmpty()) {
             fresh.setMediaItems(items, index.coerceIn(0, items.lastIndex), position)
             fresh.repeatMode = repeat
@@ -362,7 +455,7 @@ class PlaybackService : MediaSessionService() {
         exoPlayer = fresh
         sessionPlayer = wrapped
         session.player = wrapped
-        old.release()
+        builtUsbReady = UsbAudioDriver.isReady
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
@@ -469,6 +562,31 @@ class PlaybackService : MediaSessionService() {
 @OptIn(UnstableApi::class)
 private class DacVolumePlayer(player: Player) : ForwardingPlayer(player) {
     private val listeners = CopyOnWriteArraySet<Player.Listener>()
+
+    private fun trace(action: String) {
+        val stack = Throwable().stackTrace.drop(2).take(6).joinToString(" <- ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+        android.util.Log.w("OlbyinePlayCmd", "$action thread=${Thread.currentThread().name} $stack")
+    }
+
+    override fun play() {
+        trace("play")
+        super.play()
+    }
+
+    override fun pause() {
+        trace("pause")
+        super.pause()
+    }
+
+    override fun setPlayWhenReady(playWhenReady: Boolean) {
+        trace("setPlayWhenReady($playWhenReady)")
+        super.setPlayWhenReady(playWhenReady)
+    }
+
+    override fun seekTo(positionMs: Long) {
+        trace("seekTo($positionMs)")
+        super.seekTo(positionMs)
+    }
 
     private val remote: Boolean get() = UsbAudioDriver.isReady
 

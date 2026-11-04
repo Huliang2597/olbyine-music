@@ -85,6 +85,11 @@ import kotlin.random.Random
 
 internal val LocalPlayerFx = staticCompositionLocalOf { PlayerFx.DEFAULT }
 
+internal val LocalPlayerButtons = staticCompositionLocalOf { com.olbyine.music.data.PlayerButtons.DEFAULT }
+
+@Composable
+internal fun playerButton(bit: Int): Boolean = LocalPlayerButtons.current and bit != 0
+
 internal val LocalPlayerPageActive = staticCompositionLocalOf { true }
 
 @Composable

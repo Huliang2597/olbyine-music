@@ -918,7 +918,11 @@ internal fun TrackArtwork(
     corner: Dp,
     decodeEdge: Int = SMALL_COVER_EDGE,
 ) {
-    val key = track.coverPath ?: track.artworkUrl
+    val artworkContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val filePath = track.coverPath
+    val remotePath = track.artworkUrl
+    val embeddedSource = if (filePath == null && remotePath == null) track.uri.substringBefore("#cue=") else null
+    val key = filePath ?: remotePath ?: embeddedSource
     var bitmap by remember(key, decodeEdge) {
         mutableStateOf<ImageBitmap?>(
             key?.let { coverCache.get(it to decodeEdge)?.asImageBitmap() },
@@ -929,8 +933,11 @@ internal fun TrackArtwork(
         if (bitmap != null || key == null) return@LaunchedEffect
         bitmap = withContext(Dispatchers.IO) {
             coverDecodeSemaphore.withPermit {
-                if (track.coverPath != null) decodeCover(track.coverPath, decodeEdge)?.asImageBitmap()
-                else runCatching { decodeRemote(key, decodeEdge) }.getOrNull()?.asImageBitmap()
+                when {
+                    filePath != null -> decodeCover(filePath, decodeEdge)
+                    remotePath != null -> runCatching { decodeRemote(key, decodeEdge) }.getOrNull()
+                    else -> decodeEmbedded(artworkContext, key, decodeEdge)
+                }?.asImageBitmap()
             }
         }
     }
@@ -1080,7 +1087,9 @@ internal fun invalidateImage(path: String) {
 private val remoteLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
 
 internal fun remoteArtworkFile(url: String): java.io.File? {
-    val directory = java.io.File(System.getProperty("java.io.tmpdir") ?: return null, "remote-art").apply { mkdirs() }
+    val base = com.olbyine.music.OlbyineApplication.artworkCacheDir
+        ?: java.io.File(System.getProperty("java.io.tmpdir") ?: return null, "remote-art")
+    val directory = base.apply { mkdirs() }
     val file = java.io.File(directory, url.hashCode().toUInt().toString(16) + "-" + url.length + ".img")
     if (file.length() > 0L) return file
     synchronized(remoteLocks.getOrPut(url) { Any() }) {
@@ -1123,6 +1132,50 @@ private fun decodeRemote(url: String, maxEdge: Int): android.graphics.Bitmap? {
     while (bounds.outWidth / sampleSize > maxEdge || bounds.outHeight / sampleSize > maxEdge) sampleSize *= 2
     return BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sampleSize })
         ?.also { coverCache.put(url to maxEdge, it) }
+}
+
+private val embeddedMisses = java.util.Collections.synchronizedSet(HashSet<String>())
+
+private fun decodeEmbedded(context: android.content.Context, source: String, maxEdge: Int): android.graphics.Bitmap? {
+    val key = source to maxEdge
+    coverCache.get(key)?.let { return it }
+    if (source in embeddedMisses) return null
+    return synchronized(remoteLocks.getOrPut("embedded:" + source) { Any() }) {
+        coverCache.get(key)?.let { return@synchronized it }
+        if (source in embeddedMisses) return@synchronized null
+        val retriever = android.media.MediaMetadataRetriever()
+        try {
+            if (source.startsWith("file://")) {
+                retriever.setDataSource(source.removePrefix("file://"))
+            } else {
+                retriever.setDataSource(context, android.net.Uri.parse(source))
+            }
+            val bytes = retriever.embeddedPicture
+            if (bytes == null) {
+                embeddedMisses.add(source)
+                return@synchronized null
+            }
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                embeddedMisses.add(source)
+                return@synchronized null
+            }
+            var sample = 1
+            while (bounds.outWidth / sample > maxEdge * 2 || bounds.outHeight / sample > maxEdge * 2) sample *= 2
+            android.graphics.BitmapFactory.decodeByteArray(
+                bytes,
+                0,
+                bytes.size,
+                android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
+            )?.also { coverCache.put(key, it) }
+        } catch (t: Throwable) {
+            embeddedMisses.add(source)
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
 }
 
 private fun decodeCover(path: String, maxEdge: Int): android.graphics.Bitmap? {

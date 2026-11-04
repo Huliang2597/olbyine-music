@@ -8,8 +8,14 @@ import com.olbyine.music.data.OnlineMetadataRepository
 import com.olbyine.music.data.SettingsRepository
 import com.olbyine.music.data.SpotifyRepository
 import com.olbyine.music.playback.PlaybackConnection
+import kotlinx.coroutines.launch
 
 class OlbyineApplication : Application() {
+    companion object {
+        var artworkCacheDir: java.io.File? = null
+            private set
+    }
+
     lateinit var musicLibrary: MusicLibraryRepository
         private set
     lateinit var settings: SettingsRepository
@@ -54,6 +60,8 @@ class OlbyineApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        artworkCacheDir = java.io.File(cacheDir, "remote-art").apply { mkdirs() }
+        if (Application.getProcessName() != packageName) return
         musicLibrary = MusicLibraryRepository(this)
         settings = SettingsRepository(this)
         appleMusic = AppleMusicClient(this)
@@ -61,9 +69,10 @@ class OlbyineApplication : Application() {
         playback = PlaybackConnection(this)
         onlineMetadata = OnlineMetadataRepository(this, appleMusic)
         netease = com.olbyine.music.data.NeteaseClient(this)
-        lyricsHub = com.olbyine.music.data.LyricsHub(musicLibrary, netease, kuwo, appScope)
+        lyricsHub = com.olbyine.music.data.LyricsHub(musicLibrary, netease, kuwo, onlineLyrics, appScope)
         webDav = com.olbyine.music.data.WebDavRepository(this)
         musicLibrary.remoteHeaders = webDav::headersFor
+        appScope.launch { runCatching { musicLibrary.dropStoredCovers() } }
         com.olbyine.music.playback.usb.UsbAudioDriver.init(this)
         com.olbyine.music.data.ListenTogetherIm.init(this)
     }

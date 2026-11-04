@@ -297,14 +297,29 @@ class PlaybackConnection(context: Context) {
             .setIsPlayable(true)
             .apply {
                 if (track.durationMs > 0) setDurationMs(track.durationMs)
-                val artwork = track.coverPath?.let { Uri.fromFile(File(it)) } ?: track.artworkUrl?.let(Uri::parse)
+                val media = track.uri.substringBefore("#cue=")
+                val artwork = track.coverPath?.let { Uri.fromFile(File(it)) }
+                    ?: track.artworkUrl?.let(Uri::parse)
+                    ?: if (media.startsWith("content://") || media.startsWith("file://")) {
+                        EmbeddedArtworkProvider.uriFor(appContext.packageName, media)
+                    } else null
                 artwork?.let(::setArtworkUri)
             }
             .build()
         return MediaItem.Builder()
             .setMediaId(track.id)
-            .setUri(track.uri)
-            .apply { if (track.mimeType == androidx.media3.common.MimeTypes.APPLICATION_M3U8) setMimeType(track.mimeType) }
+            .setUri(track.uri.substringBefore("#cue="))
+            .apply {
+                if (track.mimeType == androidx.media3.common.MimeTypes.APPLICATION_M3U8) setMimeType(track.mimeType)
+                if (track.cueEndMs > track.cueStartMs) {
+                    setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(track.cueStartMs)
+                            .setEndPositionMs(track.cueEndMs)
+                            .build(),
+                    )
+                }
+            }
             .setMediaMetadata(metadata)
             .build()
     }

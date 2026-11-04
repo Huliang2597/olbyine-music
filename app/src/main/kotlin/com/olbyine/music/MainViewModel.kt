@@ -109,6 +109,26 @@ data class OnlineLyricsUiState(
 
 enum class PlaylistSource(val label: String) { NETEASE("网易云"), SPOTIFY("Spotify") }
 
+enum class StreamedSource(val label: String) { NETEASE("网易云"), LX("洛雪"), SOUNDCLOUD("SoundCloud") }
+
+data class StreamedPlaylistItem(
+    val key: String,
+    val name: String,
+    val count: Int,
+    val cover: String?,
+    val source: StreamedSource,
+)
+
+data class StreamedPlaylistUiState(
+    val open: Boolean = false,
+    val target: String? = null,
+    val source: StreamedSource = StreamedSource.NETEASE,
+    val loading: Boolean = false,
+    val items: List<StreamedPlaylistItem> = emptyList(),
+    val importing: String? = null,
+    val message: String? = null,
+)
+
 data class PlaylistImportUiState(
     val visible: Boolean = false,
     val source: PlaylistSource = PlaylistSource.NETEASE,
@@ -169,6 +189,7 @@ data class MetadataMatchUiState(
 
 data class MainUiState(
     val tracks: List<Track> = emptyList(),
+    val streamedTracks: List<Track> = emptyList(),
     val visibleTracks: List<Track> = emptyList(),
     val playlists: List<Playlist> = emptyList(),
     val currentTrack: Track? = null,
@@ -327,7 +348,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val playback = app.playback
     private val settingsRepository = app.settings
     private val onlineLyricsRepository = app.onlineLyrics
-    private val artworkPaletteRepository = ArtworkPaletteRepository()
+    private val artworkPaletteRepository = ArtworkPaletteRepository(application.applicationContext)
     private val savedPlayback = application.getSharedPreferences("native_playback", Application.MODE_PRIVATE)
     private val libraryPreferences = application.getSharedPreferences("native_library_view", Application.MODE_PRIVATE)
 
@@ -359,8 +380,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var activeCollectionAt = 0L
     private var resumeWriteAt = 0L
 
-    private val destination = MutableStateFlow(AppDestination.LIBRARY)
-    private var returnDestination = AppDestination.LIBRARY
+    private val destination = MutableStateFlow(startDestination())
+    private var returnDestination = startDestination()
+
+    private fun startDestination(): AppDestination =
+        if (settingsRepository.settings.value.startPage == "streaming") AppDestination.ONLINE else AppDestination.LIBRARY
     private val filter = MutableStateFlow(LibraryFilter.ALL)
     private val search = MutableStateFlow("")
     private val viewMode = MutableStateFlow(enumPreference(KEY_VIEW_MODE, LibraryViewMode.LIST))
@@ -375,6 +399,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _externalLyrics = MutableStateFlow(ExternalLyricsUiState())
     val externalLyrics: StateFlow<ExternalLyricsUiState> = _externalLyrics
     private val automaticAttempts = mutableSetOf<String>()
+    private val lyricsRepair = mutableSetOf<String>()
     private val automaticLyricsQueue = Channel<String>(Channel.BUFFERED)
     private var manualLyricsJob: Job? = null
     private var manualDownloadJob: Job? = null
@@ -382,17 +407,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var fontImportJob: Job? = null
     private val onlineTracks = MutableStateFlow<Map<String, Track>>(emptyMap())
 
-    private val indexedTracks = combine(library.tracks, library.loaded, onlineTracks) { tracks, loaded, online ->
+    private val indexedTracks = combine(library.tracks, library.loaded, library.streamedTracks, onlineTracks) { tracks, loaded, streamed, online ->
+        val all = tracks + streamed
         IndexedTracks(
             tracks = tracks,
-            byId = online + tracks.associateBy(Track::id),
-            keys = tracks.associate { track ->
+            streamed = streamed,
+            byId = online + all.associateBy(Track::id),
+            keys = all.associate { track ->
                 track.id to TrackSortKeys(SortKeys.of(track.title), SortKeys.of(track.artist), SortKeys.of(track.album))
             },
             loaded = loaded,
         )
     }.flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), IndexedTracks(emptyList(), emptyMap(), emptyMap(), false))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), IndexedTracks(emptyList(), emptyList(), emptyMap(), emptyMap(), false))
 
     private val visibleTracks = combine(
         library.tracks,
@@ -428,7 +455,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val uiState: StateFlow<MainUiState> = combine(
         combine(indexedTracks, library.playlists, playback.state, playback.usbBitPerfectState, settingsRepository.settings) { tracks, playlists, player, usb, settings ->
-            LibraryCore(tracks.tracks, tracks.byId, tracks.keys, tracks.loaded, playlists, player, usb, settings)
+            LibraryCore(tracks.tracks, tracks.streamed, tracks.byId, tracks.keys, tracks.loaded, playlists, player, usb, settings)
         },
         combine(destination, filter, search) { destination, filter, search ->
             Triple(destination, filter, search)
@@ -448,6 +475,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val tracksById = core.tracksById
         MainUiState(
             tracks = tracks,
+            streamedTracks = core.streamed,
             visibleTracks = visible,
             playlists = core.playlists,
             currentTrack = player.currentMediaId?.let { id -> tracksById[id] ?: playerTrack(id, player) },
@@ -471,7 +499,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             libraryLoaded = core.loaded,
         )
     }.flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), MainUiState())
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000L),
+            MainUiState(
+                settings = settingsRepository.settings.value,
+                destination = destination.value,
+                libraryViewMode = viewMode.value,
+                librarySortMode = sortMode.value,
+            ),
+        )
 
     val parsedLyrics: StateFlow<LyricsDocument> = app.lyricsHub.document
 
@@ -483,7 +520,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         persistPlaybackPosition()
         processAutomaticLyricsQueue()
         observeArtworkColors()
-        viewModelScope.launch { playback.state.map { it.currentMediaId }.distinctUntilChanged().collect { app.lyricsHub.setCurrent(it) } }
+        viewModelScope.launch {
+            playback.state.map { it.currentMediaId }.distinctUntilChanged().collect { mediaId ->
+                app.lyricsHub.setCurrent(mediaId)
+                val trackId = mediaId ?: return@collect
+                val track = library.tracks.value.firstOrNull { it.id == trackId } ?: return@collect
+                val repair = track.jsonOnlyLyrics()
+                if (!repair && !settingsRepository.settings.value.automaticLyricsEnabled) return@collect
+                if ((repair || needsAutomaticLyrics(track)) && automaticAttempts.add(track.id)) {
+                    if (repair) lyricsRepair.add(track.id)
+                    automaticLyricsQueue.send(track.id)
+                }
+            }
+        }
+        viewModelScope.launch {
+            library.loaded.first { it }
+            val broken = library.tracks.value.filter { track -> track.jsonOnlyLyrics() }
+            broken.forEach { track ->
+                if (automaticAttempts.add(track.id)) {
+                    lyricsRepair.add(track.id)
+                    automaticLyricsQueue.send(track.id)
+                }
+            }
+        }
         viewModelScope.launch {
             playback.state.collect { state ->
                 val key = _activeCollection.value ?: return@collect
@@ -708,8 +767,150 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         library.reorderPlaylistTracks(id, orderedTrackIds)
     }
 
+    private val _streamedPicker = MutableStateFlow(StreamedPlaylistUiState())
+    val streamedPicker: StateFlow<StreamedPlaylistUiState> = _streamedPicker
+    private var streamedPickerJob: Job? = null
+
+    fun openStreamedPlaylistPicker(playlistId: String) {
+        _streamedPicker.value = StreamedPlaylistUiState(open = true, target = playlistId)
+        loadStreamedPlaylists(StreamedSource.NETEASE)
+    }
+
+    fun dismissStreamedPlaylistPicker() {
+        streamedPickerJob?.cancel()
+        streamedPickerJob = null
+        _streamedPicker.value = StreamedPlaylistUiState()
+    }
+
+    fun selectStreamedSource(source: StreamedSource) {
+        if (_streamedPicker.value.source == source && _streamedPicker.value.items.isNotEmpty()) return
+        loadStreamedPlaylists(source)
+    }
+
+    private fun loadStreamedPlaylists(source: StreamedSource) {
+        streamedPickerJob?.cancel()
+        _streamedPicker.value = _streamedPicker.value.copy(source = source, loading = true, items = emptyList(), message = null)
+        streamedPickerJob = viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    when (source) {
+                        StreamedSource.NETEASE -> app.netease.playlists().map { playlist ->
+                            StreamedPlaylistItem(
+                                key = "ncm:${playlist.id}",
+                                name = playlist.name,
+                                count = playlist.trackCount,
+                                cover = playlist.coverUrl,
+                                source = source,
+                            )
+                        }
+                        StreamedSource.LX -> app.lxPlaylists.all().map { playlist ->
+                            StreamedPlaylistItem(
+                                key = "lx:${playlist.id}",
+                                name = playlist.name.ifBlank { "未命名歌单" },
+                                count = playlist.songs.size,
+                                cover = playlist.songs.firstOrNull()?.coverUrl,
+                                source = source,
+                            )
+                        }
+                        StreamedSource.SOUNDCLOUD -> app.soundCloud.myPlaylists().map { playlist ->
+                            StreamedPlaylistItem(
+                                key = "sc:${playlist.id}",
+                                name = playlist.title,
+                                count = playlist.trackCount,
+                                cover = playlist.artworkUrl,
+                                source = source,
+                            )
+                        }
+                    }
+                }
+            }
+            _streamedPicker.value = result.fold(
+                onSuccess = { items ->
+                    _streamedPicker.value.copy(
+                        loading = false,
+                        items = items,
+                        message = if (items.isEmpty()) "${source.label}没有可用的歌单" else null,
+                    )
+                },
+                onFailure = { error ->
+                    if (error is CancellationException) throw error
+                    _streamedPicker.value.copy(
+                        loading = false,
+                        items = emptyList(),
+                        message = error.message?.takeIf { it.isNotBlank() && !it.startsWith("HTTP") } ?: "读取${source.label}歌单失败",
+                    )
+                },
+            )
+        }
+    }
+
+    fun importStreamedPlaylist(item: StreamedPlaylistItem) {
+        val target = _streamedPicker.value.target ?: return
+        if (_streamedPicker.value.importing != null) return
+        _streamedPicker.value = _streamedPicker.value.copy(importing = item.key, message = null)
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val tracks = when (item.source) {
+                        StreamedSource.NETEASE -> app.netease.playlistSongs(item.key.removePrefix("ncm:").toLong())
+                            .map { it.toTrack() }
+                        StreamedSource.LX -> app.lxPlaylists.find(item.key.removePrefix("lx:"))
+                            ?.songs?.map { it.toTrack() }.orEmpty()
+                        StreamedSource.SOUNDCLOUD -> {
+                            val id = item.key.removePrefix("sc:").toLong()
+                            app.soundCloud.playlist(
+                                com.olbyine.music.data.ScPlaylist(
+                                    id = id,
+                                    title = item.name,
+                                    user = com.olbyine.music.data.ScUser(0, "", null),
+                                    artworkUrl = item.cover,
+                                    trackCount = item.count,
+                                    album = false,
+                                ),
+                            ).tracks.map { it.toTrack() }
+                        }
+                    }
+                    library.addStreamedToPlaylist(target, tracks)
+                }
+            }
+            _streamedPicker.value = result.fold(
+                onSuccess = { added ->
+                    _streamedPicker.value.copy(
+                        importing = null,
+                        message = if (added > 0) "已加入 $added 首到「${library.playlists.value.firstOrNull { it.id == target }?.name ?: "歌单"}」" else "这些歌曲已经在歌单里了",
+                    )
+                },
+                onFailure = { error ->
+                    if (error is CancellationException) throw error
+                    _streamedPicker.value.copy(
+                        importing = null,
+                        message = error.message?.takeIf { it.isNotBlank() && !it.startsWith("HTTP") } ?: "加入歌单失败",
+                    )
+                },
+            )
+        }
+    }
+
     fun reorderPlaylists(orderedIds: List<String>) = libraryAction {
         library.reorderPlaylists(orderedIds)
+    }
+
+    fun addStreamedTrackToLibraryPlaylist(playlistId: String, track: Track) {
+        viewModelScope.launch {
+            runCatching { library.addStreamedToPlaylist(playlistId, listOf(track)) }
+                .onSuccess { message.value = "已加入音乐库歌单" }
+                .onFailure { message.value = "加入歌单失败：${it.message ?: "未知错误"}" }
+        }
+    }
+
+    fun createLibraryPlaylistWithStreamedTrack(name: String, track: Track) {
+        viewModelScope.launch {
+            runCatching {
+                val playlist = library.createPlaylist(name)
+                library.addStreamedToPlaylist(playlist.id, listOf(track))
+            }.onSuccess { message.value = "已新建歌单「$name」" }
+                .onFailure { message.value = "新建歌单失败：${it.message ?: "未知错误"}" }
+        }
     }
 
     private fun libraryAction(action: suspend () -> Unit) {
@@ -847,6 +1048,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setNeteaseQuality(value: String) = settingsRepository.setNeteaseQuality(value)
 
     fun setPlayerFullscreen(value: String) = settingsRepository.setPlayerFullscreen(value)
+
+    fun setKeepScreenOn(value: Boolean) = settingsRepository.setKeepScreenOn(value)
+
+    fun setMultiAppPlayback(value: Boolean) = settingsRepository.setMultiAppPlayback(value)
+
+    fun setPlayerButton(bit: Int, enabled: Boolean) = settingsRepository.setPlayerButton(bit, enabled)
+
+    fun setStartPage(value: String) = settingsRepository.setStartPage(value)
+
+    fun setStartLibrarySection(value: String) = settingsRepository.setStartLibrarySection(value)
+
+    fun setStartStreamingProvider(value: String) = settingsRepository.setStartStreamingProvider(value)
+
     fun setNeteaseDownloadQuality(value: String) = settingsRepository.setNeteaseDownloadQuality(value)
     fun setNeteaseDownloadLyrics(value: Boolean) = settingsRepository.setNeteaseDownloadLyrics(value)
 
@@ -2226,6 +2440,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val app = getApplication<Application>()
         return listOf(
             File(app.cacheDir, "external-covers"),
+            File(app.cacheDir, "remote-art"),
             File(app.cacheDir, "ncm-lists"),
             File(app.filesDir, "meta"),
             File(app.filesDir, "nim"),
@@ -2242,6 +2457,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             index++
         }
         return "%.1f %s".format(value, units[index])
+    }
+
+    suspend fun storedCoverBytes(): Long = withContext(Dispatchers.IO) {
+        (getApplication<Application>() as OlbyineApplication).musicLibrary.storedCoverBytes()
+    }
+
+    fun clearCopiedCovers(onFreed: (Long) -> Unit) {
+        viewModelScope.launch {
+            val freed = (getApplication<Application>() as OlbyineApplication).musicLibrary.dropStoredCovers()
+            onFreed(freed)
+        }
     }
 
     suspend fun cacheUsageBytes(): Long = withContext(Dispatchers.IO) {
@@ -3842,14 +4068,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun processAutomaticLyricsQueue() {
         viewModelScope.launch {
             for (trackId in automaticLyricsQueue) {
-                settingsRepository.settings.first { it.automaticLyricsEnabled }
-                delay(AUTOMATIC_LYRICS_START_DELAY_MS)
-                if (!settingsRepository.settings.value.automaticLyricsEnabled) {
-                    automaticAttempts.remove(trackId)
-                    continue
+                val repair = trackId in lyricsRepair
+                if (repair) {
+                    delay(AUTOMATIC_LYRICS_START_DELAY_MS)
+                } else {
+                    settingsRepository.settings.first { it.automaticLyricsEnabled }
+                    delay(AUTOMATIC_LYRICS_START_DELAY_MS)
+                    if (!settingsRepository.settings.value.automaticLyricsEnabled) {
+                        automaticAttempts.remove(trackId)
+                        continue
+                    }
                 }
                 val track = library.tracks.value.firstOrNull { it.id == trackId } ?: continue
-                if (needsAutomaticLyrics(track, ignoreQueued = true)) automaticMatch(track)
+                if (track.id in lyricsRepair || needsAutomaticLyrics(track, ignoreQueued = true)) {
+                    lyricsRepair.remove(trackId)
+                    automaticMatch(track)
+                }
                 delay(AUTOMATIC_LYRICS_INTERVAL_MS)
             }
         }
@@ -3866,7 +4100,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val local = tracks.firstOrNull { it.id == mediaId }
                     val onlineTrack = online[mediaId]
                     val fullCover = player.currentArtwork?.takeIf { it.startsWith("file://") }?.let { Uri.parse(it).path }
-                    val path = local?.coverPath ?: onlineTrack?.coverPath?.takeIf(String::isNotBlank) ?: fullCover
+                    val embedded = local?.uri?.substringBefore("#cue=")?.let {
+                        if (it.startsWith("content://") || it.startsWith("file://")) "embedded:$it" else null
+                    }
+                    val path = local?.coverPath ?: onlineTrack?.coverPath?.takeIf(String::isNotBlank) ?: fullCover ?: embedded
                     val url = path?.takeIf { it.startsWith("http", true) } ?: currentOnlineCoverUrl(mediaId)
                     ArtworkRequest(mediaId, path ?: url)
                 }
@@ -3886,6 +4123,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mediaId.startsWith("ncm:") -> _netease.value.songs.firstOrNull { it.id.toString() == id }?.coverUrl
             mediaId.startsWith("kw:") -> _kuwo.value.results.firstOrNull { it.id.toString() == id }?.coverUrl
             else -> onlineTracks.value[mediaId]?.coverPath
+        }
+    }
+
+    private fun Track.jsonOnlyLyrics(): Boolean {
+        if (hasLyrics) return false
+        return listOfNotNull(lyrics, wordLyrics).any { text ->
+            val raw = text.trim()
+            raw.isNotEmpty() && (raw.first() == '{' || raw.first() == '[')
         }
     }
 
@@ -3985,6 +4230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private data class LibraryCore(
         val tracks: List<Track>,
+        val streamed: List<Track>,
         val tracksById: Map<String, Track>,
         val keys: Map<String, TrackSortKeys>,
         val loaded: Boolean,
@@ -3996,6 +4242,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private data class IndexedTracks(
         val tracks: List<Track>,
+        val streamed: List<Track>,
         val byId: Map<String, Track>,
         val keys: Map<String, TrackSortKeys>,
         val loaded: Boolean,

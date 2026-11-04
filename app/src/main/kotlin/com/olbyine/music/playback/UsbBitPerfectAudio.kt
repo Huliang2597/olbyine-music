@@ -68,7 +68,7 @@ internal class UsbBitPerfectAudio(context: Context) {
     private var mixerListener: AudioManager.OnPreferredMixerAttributesChangedListener? = null
 
     private val settingsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == SETTING_KEY) refresh()
+        if (key == SETTING_KEY || key == com.olbyine.music.playback.usb.UsbAudioDriver.PREF_KEY) refresh()
     }
 
     private val deviceCallback = object : AudioDeviceCallback() {
@@ -108,7 +108,17 @@ internal class UsbBitPerfectAudio(context: Context) {
 
     private fun refresh() {
         if (!started) return
-        val enabled = runCatching { preferences.getBoolean(SETTING_KEY, true) }.getOrDefault(true)
+        val enabled = com.olbyine.music.playback.usb.UsbAudioDriver.enabled &&
+            runCatching { preferences.getBoolean(SETTING_KEY, true) }.getOrDefault(true)
+        if (!enabled) {
+            outputProvider.setTarget(null, UsbOutputMode.NATIVE_RATE, false)
+            val wasSelected = selectedDeviceId != null
+            selectedDeviceId = null
+            selectedMode = UsbOutputMode.NATIVE_RATE
+            if (wasSelected) player?.setPreferredAudioDevice(null)
+            UsbBitPerfectRuntime.publish(UsbBitPerfectState())
+            return
+        }
         val unmodifiedPlayback = player?.let {
             it.playbackParameters.speed == 1f && it.playbackParameters.pitch == 1f &&
                 it.volume == 1f && !it.skipSilenceEnabled
@@ -120,20 +130,25 @@ internal class UsbBitPerfectAudio(context: Context) {
         val capabilities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             preferredDevices.associateWith(::capabilityOf)
         } else emptyMap()
-        val target = when {
-            !enabled -> null
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> null
-            !unmodifiedPlayback -> null
-            else -> preferredDevices.firstOrNull { capabilities[it]?.bitPerfect == true }
+        val capable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            preferredDevices.firstOrNull { capabilities[it]?.bitPerfect == true }
                 ?: preferredDevices.firstOrNull { (capabilities[it]?.defaultFormats ?: 0) > 0 }
+        } else null
+        val target = when {
+            com.olbyine.music.playback.usb.UsbAudioDriver.isClosing -> null
+            preferredDevices.isEmpty() -> null
+            capable != null -> capable
+            else -> preferredDevices.first()
         }
-        val mode = if (target != null && capabilities[target]?.bitPerfect == true) UsbOutputMode.BIT_PERFECT
-            else UsbOutputMode.NATIVE_RATE
+        val mode = if (target != null && enabled && unmodifiedPlayback && capabilities[target]?.bitPerfect == true) {
+            UsbOutputMode.BIT_PERFECT
+        } else UsbOutputMode.NATIVE_RATE
+        val allowMixer = enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
         val previousId = selectedDeviceId
         val previousMode = selectedMode
         selectedDeviceId = target?.id
         selectedMode = mode
-        val hadOutput = outputProvider.setTarget(target, mode)
+        val hadOutput = outputProvider.setTarget(target, mode, allowMixer)
         if (previousId != target?.id || (target != null && previousMode != mode)) {
             player?.setPreferredAudioDevice(target)
             if (hadOutput) {
@@ -155,10 +170,9 @@ internal class UsbBitPerfectAudio(context: Context) {
             Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> UsbBitPerfectStatus.UNSUPPORTED_ANDROID
             devices.isEmpty() -> UsbBitPerfectStatus.NO_DEVICE
             !unmodifiedPlayback -> UsbBitPerfectStatus.OUTPUT_MISMATCH
-            target == null -> UsbBitPerfectStatus.UNSUPPORTED_DEVICE
             else -> UsbBitPerfectStatus.WAITING_FOR_AUDIO
         }
-        if (target == null) {
+        if (target == null || status != UsbBitPerfectStatus.WAITING_FOR_AUDIO) {
             val detail = when {
                 status == UsbBitPerfectStatus.OUTPUT_MISMATCH && !unmodifiedPlayback ->
                     "倍速、变调、播放器音量或跳过静音会修改音频数据"
@@ -202,6 +216,7 @@ internal class UsbBitPerfectAudio(context: Context) {
         player?.removeListener(playbackListener)
         player?.setPreferredAudioDevice(null)
         player = null
+        AudioChainRuntime.reset()
         selectedDeviceId = null
         outputProvider.close()
         UsbBitPerfectRuntime.publish(UsbBitPerfectState())
@@ -231,8 +246,10 @@ internal class BitPerfectOutputProvider(
     private var activeOutput: UsbOutput? = null
     private var ownedMixer: OwnedMixer? = null
 
+    private var allowMixer = false
+
     @Synchronized
-    fun setTarget(device: AudioDeviceInfo?, outputMode: UsbOutputMode): Boolean {
+    fun setTarget(device: AudioDeviceInfo?, outputMode: UsbOutputMode, mixerAllowed: Boolean): Boolean {
         val hadOutput = activeOutput != null
         if (target?.id != device?.id || mode != outputMode) {
             clearMixer()
@@ -244,6 +261,7 @@ internal class BitPerfectOutputProvider(
         }
         target = device
         mode = outputMode
+        allowMixer = mixerAllowed
         return hadOutput
     }
 
@@ -252,13 +270,22 @@ internal class BitPerfectOutputProvider(
 
     @Synchronized
     override fun getAudioOutput(config: AudioOutputProvider.OutputConfig): AudioOutput {
-        if (com.olbyine.music.playback.usb.UsbAudioDriver.isReady) {
+        if (com.olbyine.music.playback.usb.UsbAudioDriver.isReady && !com.olbyine.music.playback.usb.UsbAudioDriver.isClosing) {
             val direct = runCatching { com.olbyine.music.playback.usb.UsbDirectAudioOutput.create(config) }.getOrNull()
-            if (direct != null) return EnergyTapOutput(EffectsOutput(direct, config, eqAllowed = false), config)
+            if (direct != null) {
+                AudioChainRuntime.publish(
+                    config.sampleRate,
+                    Integer.bitCount(config.channelMask),
+                    config.encoding,
+                    direct = true,
+                    deviceName = com.olbyine.music.playback.usb.UsbAudioDriver.state.value.deviceName,
+                )
+                return EnergyTapOutput(EffectsOutput(direct, config, eqAllowed = false), config)
+            }
         }
         val generation = ++outputGeneration
         clearMixer()
-        if (target != null) activateMixer(config, generation)
+        if (target != null && allowMixer) activateMixer(config, generation)
         return try {
             val output = super.getAudioOutput(config)
             val wrapped = if (output is AudioTrackAudioOutput) {
@@ -270,6 +297,13 @@ internal class BitPerfectOutputProvider(
                 output
             }
             activeOutput = wrapped as? UsbOutput
+            AudioChainRuntime.publish(
+                config.sampleRate,
+                Integer.bitCount(config.channelMask),
+                config.encoding,
+                direct = false,
+                deviceName = target?.productName?.toString(),
+            )
             EnergyTapOutput(EffectsOutput(wrapped, config), config)
         } catch (error: AudioOutputProvider.InitializationException) {
             clearMixer()
@@ -379,6 +413,7 @@ internal class BitPerfectOutputProvider(
             bitPerfect -> UsbBitPerfectStatus.ACTIVE
             else -> UsbBitPerfectStatus.NATIVE_RATE
         }
+        AudioChainRuntime.routed(routed?.productName?.toString() ?: device.productName?.toString())
         val detail = when (status) {
             UsbBitPerfectStatus.ACTIVE ->
                 "独占输出：${actualFormat.sampleRate} Hz · ${actualFormat.encoding.pcmName()}"

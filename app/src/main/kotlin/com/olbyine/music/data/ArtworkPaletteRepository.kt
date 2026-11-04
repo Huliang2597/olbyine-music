@@ -7,7 +7,7 @@ import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-class ArtworkPaletteRepository {
+class ArtworkPaletteRepository(private val context: android.content.Context? = null) {
     private val cache = object : LruCache<String, List<Int>>(48) {}
 
     suspend fun colorsFor(seed: String?, coverPath: String?): List<Int> = withContext(Dispatchers.IO) {
@@ -18,7 +18,13 @@ class ArtworkPaletteRepository {
 
         val colors = source
             .takeIf { it.isNotBlank() }
-            ?.let { if (it.startsWith("http", true)) decodeRemote(it) else decodeSampled(it) }
+            ?.let {
+                when {
+                    it.startsWith("http", true) -> decodeRemote(it)
+                    it.startsWith(EMBEDDED_PREFIX) -> decodeEmbedded(it.removePrefix(EMBEDDED_PREFIX))
+                    else -> decodeSampled(it)
+                }
+            }
             ?.let(::sampleGrid)
             ?.takeIf { it.size == COLOR_COUNT }
             ?: fallbackColors(safeSeed)
@@ -38,6 +44,33 @@ class ArtworkPaletteRepository {
             android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         }
     }.getOrNull()
+
+    private fun decodeEmbedded(source: String): Bitmap? {
+        val ctx = context ?: return null
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            if (source.startsWith("file://")) retriever.setDataSource(source.removePrefix("file://"))
+            else retriever.setDataSource(ctx, android.net.Uri.parse(source))
+            val bytes = retriever.embeddedPicture
+            if (bytes == null) {
+                null
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                    null
+                } else {
+                    var sampleSize = 1
+                    while (bounds.outWidth / sampleSize > SAMPLE_EDGE * 2 || bounds.outHeight / sampleSize > SAMPLE_EDGE * 2) sampleSize *= 2
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sampleSize })
+                }
+            }
+        } catch (t: Throwable) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
 
     private fun decodeSampled(path: String): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -136,6 +169,7 @@ class ArtworkPaletteRepository {
         private const val COLOR_COUNT = GRID_COLUMNS * GRID_ROWS
         private const val SAMPLE_EDGE = 96
         private const val SAMPLE_STRIDE = 2
+        const val EMBEDDED_PREFIX = "embedded:"
 
         val DefaultColors: List<Int> = listOf(
             0xFF5E315F.toInt(),

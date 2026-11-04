@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         com.olbyine.music.playback.FloatingLyrics.appInFront = true
         com.olbyine.music.playback.FloatingLyrics.active?.refresh()
+        com.olbyine.music.playback.usb.UsbAudioDriver.ensureAttached()
     }
 
     override fun onPause() {

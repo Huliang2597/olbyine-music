@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
 internal enum class NeteasePlaylistSort { DEFAULT, MOST_USED }
 
 @Composable
-private fun NeteaseSortChip(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun PickerChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     Box(
         Modifier
@@ -68,7 +68,11 @@ private fun NeteaseSortChip(label: String, selected: Boolean, onClick: () -> Uni
 @Composable
 internal fun NeteasePlaylistPicker(
     client: NeteaseClient,
+    libraryPlaylists: List<com.olbyine.music.data.Playlist>,
+    libraryTracks: List<com.olbyine.music.data.Track> = emptyList(),
     onPick: (NeteasePlaylistSummary) -> Unit,
+    onPickLibrary: (String) -> Unit,
+    onCreateLibrary: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val (state, retry) = rememberLoad(client.signedIn) {
@@ -76,6 +80,9 @@ internal fun NeteasePlaylistPicker(
         client.playlists().filter { it.own && !it.liked }
     }
     var naming by remember { mutableStateOf(false) }
+    var namingLibrary by remember { mutableStateOf(false) }
+    var libraryMode by remember { mutableStateOf(false) }
+    val libraryTrackById = remember(libraryTracks) { libraryTracks.associateBy(com.olbyine.music.data.Track::id) }
     val pickerContext = LocalContext.current
     var sortMode by remember { mutableStateOf(NeteasePlaylistSortStore.sortMode(pickerContext)) }
     val usage = remember(state.value) { NeteasePlaylistSortStore.usage(pickerContext) }
@@ -104,29 +111,29 @@ internal fun NeteasePlaylistPicker(
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.size(10.dp))
-            if (state.value != null) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 22.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    NeteaseSortChip("默认顺序", sortMode == NeteasePlaylistSort.DEFAULT) {
-                        sortMode = NeteasePlaylistSort.DEFAULT
-                        NeteasePlaylistSortStore.setSortMode(pickerContext, sortMode)
-                    }
-                    NeteaseSortChip("常用优先", sortMode == NeteasePlaylistSort.MOST_USED) {
-                        sortMode = NeteasePlaylistSort.MOST_USED
-                        NeteasePlaylistSortStore.setSortMode(pickerContext, sortMode)
-                    }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 22.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PickerChip("默认顺序", !libraryMode && sortMode == NeteasePlaylistSort.DEFAULT) {
+                    libraryMode = false
+                    sortMode = NeteasePlaylistSort.DEFAULT
+                    NeteasePlaylistSortStore.setSortMode(pickerContext, sortMode)
                 }
-                Spacer(Modifier.size(8.dp))
+                PickerChip("常用优先", !libraryMode && sortMode == NeteasePlaylistSort.MOST_USED) {
+                    libraryMode = false
+                    sortMode = NeteasePlaylistSort.MOST_USED
+                    NeteasePlaylistSortStore.setSortMode(pickerContext, sortMode)
+                }
+                PickerChip("音乐库歌单", libraryMode) {
+                    libraryMode = true
+                }
             }
-            val lists = if (state.value == null) null else sorted
-            if (lists == null) {
-                LoadingOrError(state.loading, state.error, retry)
-            } else {
+            Spacer(Modifier.size(8.dp))
+            if (libraryMode) {
                 LazyColumn(Modifier.fillMaxWidth(), state = pickState) {
-                    item(key = "new") {
+                    item(key = "library-new") {
                         PickerRow(
                             leading = {
                                 Box(
@@ -136,31 +143,79 @@ internal fun NeteasePlaylistPicker(
                                 ) { StyledIcon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.onSurface) }
                             },
                             title = "新建歌单",
-                            subtitle = null,
-                            onClick = { naming = true },
+                            subtitle = "在音乐库里新建，并把这首歌放进去",
+                            onClick = { namingLibrary = true },
                         )
                     }
-                    items(lists, key = { it.id }) { playlist ->
+                    items(libraryPlaylists, key = { it.id }) { playlist ->
                         PickerRow(
                             leading = {
-                                UrlImage(playlist.coverUrl?.let { "$it?param=120y120" }, Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))) {
-                                    Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)), contentAlignment = Alignment.Center) {
-                                        StyledIcon(Icons.AutoMirrored.Rounded.QueueMusic, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
+                                CoverMosaic(
+                                    remember(playlist.trackIds, libraryTrackById) {
+                                        playlist.trackIds.asSequence().mapNotNull(libraryTrackById::get).take(4).toList()
+                                    },
+                                    Modifier.size(48.dp),
+                                    12.dp,
+                                    playlist.id,
+                                )
                             },
                             title = playlist.name,
-                            subtitle = "${playlist.trackCount} 首",
+                            subtitle = "${playlist.trackIds.size} 首",
                             onClick = {
                                 haptics.click(HapticArea.MENUS)
-                                NeteasePlaylistSortStore.touch(pickerContext, playlist.id)
-                                onPick(playlist)
+                                onPickLibrary(playlist.id)
                             },
                         )
                     }
                 }
+            } else {
+                val lists = if (state.value == null) null else sorted
+                if (lists == null) {
+                    LoadingOrError(state.loading, state.error, retry)
+                } else {
+                    LazyColumn(Modifier.fillMaxWidth(), state = pickState) {
+                        item(key = "new") {
+                            PickerRow(
+                                leading = {
+                                    Box(
+                                        Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
+                                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)),
+                                        contentAlignment = Alignment.Center,
+                                    ) { StyledIcon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.onSurface) }
+                                },
+                                title = "新建歌单",
+                                subtitle = null,
+                                onClick = { naming = true },
+                            )
+                        }
+                        items(lists, key = { it.id }) { playlist ->
+                            PickerRow(
+                                leading = {
+                                    UrlImage(playlist.coverUrl?.let { "$it?param=120y120" }, Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))) {
+                                        Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)), contentAlignment = Alignment.Center) {
+                                            StyledIcon(Icons.AutoMirrored.Rounded.QueueMusic, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                },
+                                title = playlist.name,
+                                subtitle = "${playlist.trackCount} 首",
+                                onClick = {
+                                    haptics.click(HapticArea.MENUS)
+                                    NeteasePlaylistSortStore.touch(pickerContext, playlist.id)
+                                    onPick(playlist)
+                                },
+                            )
+                        }
+                    }
+                }
             }
             Spacer(Modifier.size(12.dp))
+        }
+    }
+    if (namingLibrary) {
+        PlaylistNameDialog("新建音乐库歌单", "", { namingLibrary = false }) { name ->
+            namingLibrary = false
+            onCreateLibrary(name)
         }
     }
     if (naming) {
@@ -202,7 +257,11 @@ internal fun PickerRow(leading: @Composable () -> Unit, title: String, subtitle:
 internal fun ScPlaylistPicker(
     client: com.olbyine.music.data.SoundCloudClient,
     trackId: Long,
+    libraryPlaylists: List<com.olbyine.music.data.Playlist>,
+    libraryTracks: List<com.olbyine.music.data.Track> = emptyList(),
     onDone: (String) -> Unit,
+    onPickLibrary: (String) -> Unit,
+    onCreateLibrary: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val (state, retry) = rememberLoad(trackId) {
@@ -210,6 +269,9 @@ internal fun ScPlaylistPicker(
         client.ownPlaylists()
     }
     var naming by remember { mutableStateOf(false) }
+    var namingLibrary by remember { mutableStateOf(false) }
+    var libraryMode by remember { mutableStateOf(false) }
+    val libraryTrackById = remember(libraryTracks) { libraryTracks.associateBy(com.olbyine.music.data.Track::id) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
@@ -235,10 +297,58 @@ internal fun ScPlaylistPicker(
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
             Text("加入 SoundCloud 歌单", Modifier.padding(horizontal = 22.dp), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.size(10.dp))
-            val lists = state.value
-            if (lists == null) {
-                LoadingOrError(state.loading, state.error, retry)
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 22.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PickerChip("SoundCloud 歌单", !libraryMode) { libraryMode = false }
+                PickerChip("音乐库歌单", libraryMode) { libraryMode = true }
+            }
+            Spacer(Modifier.size(8.dp))
+            if (libraryMode) {
+                LazyColumn(Modifier.fillMaxWidth(), state = pickState) {
+                    item(key = "library-new") {
+                        PickerRow(
+                            leading = {
+                                Box(
+                                    Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)),
+                                    contentAlignment = Alignment.Center,
+                                ) { StyledIcon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.onSurface) }
+                            },
+                            title = "新建歌单",
+                            subtitle = "在音乐库里新建，并把这首歌放进去",
+                            onClick = { if (!busy) namingLibrary = true },
+                        )
+                    }
+                    items(libraryPlaylists, key = { it.id }) { playlist ->
+                        PickerRow(
+                            leading = {
+                                CoverMosaic(
+                                    remember(playlist.trackIds, libraryTrackById) {
+                                        playlist.trackIds.asSequence().mapNotNull(libraryTrackById::get).take(4).toList()
+                                    },
+                                    Modifier.size(48.dp),
+                                    12.dp,
+                                    playlist.id,
+                                )
+                            },
+                            title = playlist.name,
+                            subtitle = "${playlist.trackIds.size} 首",
+                            onClick = {
+                                if (!busy) {
+                                    haptics.click(HapticArea.MENUS)
+                                    onPickLibrary(playlist.id)
+                                }
+                            },
+                        )
+                    }
+                }
             } else {
+                val lists = state.value
+                if (lists == null) {
+                    LoadingOrError(state.loading, state.error, retry)
+                } else {
                 LazyColumn(Modifier.fillMaxWidth(), state = pickState) {
                     item(key = "new") {
                         PickerRow(
@@ -274,7 +384,14 @@ internal fun ScPlaylistPicker(
                     }
                 }
             }
+            }
             Spacer(Modifier.size(12.dp))
+        }
+    }
+    if (namingLibrary) {
+        PlaylistNameDialog("新建音乐库歌单", "", { namingLibrary = false }) { name ->
+            namingLibrary = false
+            onCreateLibrary(name)
         }
     }
     if (naming) {

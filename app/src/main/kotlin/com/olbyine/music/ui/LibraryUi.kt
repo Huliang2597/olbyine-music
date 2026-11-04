@@ -149,6 +149,9 @@ import com.olbyine.music.LibrarySortMode
 import com.olbyine.music.LibraryViewMode
 import com.olbyine.music.MainUiState
 import com.olbyine.music.SortKeys
+import com.olbyine.music.StreamedPlaylistItem
+import com.olbyine.music.StreamedPlaylistUiState
+import com.olbyine.music.StreamedSource
 import com.olbyine.music.TrackSortKeys
 import com.olbyine.music.data.Album
 import com.olbyine.music.data.HapticArea
@@ -171,6 +174,7 @@ internal class LibraryNav(section: LibrarySection, albumKey: String?, composerKe
     var section by mutableStateOf(section)
     var albumKey by mutableStateOf(albumKey)
     var composerKey by mutableStateOf(composerKey)
+    var scrollLocked by mutableStateOf(false)
 
     companion object {
         val Saver = androidx.compose.runtime.saveable.listSaver<LibraryNav, String?>(
@@ -181,8 +185,10 @@ internal class LibraryNav(section: LibrarySection, albumKey: String?, composerKe
 }
 
 @Composable
-internal fun rememberLibraryNav(favorites: Boolean): LibraryNav = rememberSaveable(saver = LibraryNav.Saver) {
-    LibraryNav(if (favorites) LibrarySection.FAVORITES else LibrarySection.ALL, null)
+internal fun rememberLibraryNav(favorites: Boolean, preferred: String = "ALL"): LibraryNav = rememberSaveable(saver = LibraryNav.Saver) {
+    val start = if (favorites) LibrarySection.FAVORITES
+    else LibrarySection.values().firstOrNull { it.name == preferred } ?: LibrarySection.ALL
+    LibraryNav(start, null)
 }
 
 private data class LibraryPage(
@@ -210,7 +216,7 @@ private fun pageTracks(page: LibraryPage, state: MainUiState, albums: List<Album
         }
         LibrarySection.PLAYLISTS -> {
             val playlist = state.playlists.firstOrNull { it.id == page.playlistId }
-            val tracksById = state.tracks.associateBy(Track::id)
+            val tracksById = (state.tracks + state.streamedTracks).associateBy(Track::id)
             playlist?.trackIds.orEmpty().mapNotNull(tracksById::get).filter { it.matches(query) }
         }
     }
@@ -324,6 +330,7 @@ internal fun LibraryScreen(
     onReorderPlaylists: (List<String>) -> Unit,
     onMatchMetadata: (Track) -> Unit,
     onImportNeteasePlaylist: () -> Unit,
+    onAddStreamedPlaylist: (String) -> Unit,
     onExternalLyrics: () -> Unit,
     albumRequest: String? = null,
     onAlbumRequestHandled: () -> Unit = {},
@@ -338,6 +345,16 @@ internal fun LibraryScreen(
     var section by nav::section
     var albumKey by nav::albumKey
     var composerKey by nav::composerKey
+    var previousAlbumKey by remember { mutableStateOf(albumKey) }
+    LaunchedEffect(albumKey) {
+        val previous = previousAlbumKey
+        previousAlbumKey = albumKey
+        if (previous != null && albumKey == null) {
+            nav.scrollLocked = true
+            kotlinx.coroutines.delay(720)
+            nav.scrollLocked = false
+        }
+    }
     LaunchedEffect(albumRequest) {
         val request = albumRequest ?: return@LaunchedEffect
         section = LibrarySection.ALBUMS
@@ -555,10 +572,9 @@ internal fun LibraryScreen(
                         sameSection && !initialState.drilledIn && targetState.drilledIn ->
                             (fadeIn(tween(220, delayMillis = 40, easing = OlbyineTokens.Motion.easeOut)) +
                                 slideInVertically(tween(300, easing = OlbyineTokens.Motion.easeOut)) { it / 14 })
-                                .togetherWith(fadeOut(tween(160)) + scaleOut(tween(260, easing = OlbyineTokens.Motion.easeOut), targetScale = .94f))
+                                .togetherWith(fadeOut(tween(160)))
                         sameSection && initialState.drilledIn && !targetState.drilledIn ->
-                            (fadeIn(tween(200, delayMillis = 30, easing = OlbyineTokens.Motion.easeOut)) +
-                                scaleIn(tween(260, easing = OlbyineTokens.Motion.easeOut), initialScale = .94f))
+                            fadeIn(tween(200, delayMillis = 30, easing = OlbyineTokens.Motion.easeOut))
                                 .togetherWith(fadeOut(tween(140)) + slideOutVertically(tween(220, easing = OlbyineTokens.Motion.easeOut)) { it / 14 })
                         else -> fadeIn(tween(OlbyineTokens.Motion.standardMs, easing = OlbyineTokens.Motion.easeOut))
                             .togetherWith(fadeOut(tween(OlbyineTokens.Motion.quickMs)))
@@ -612,6 +628,7 @@ internal fun LibraryScreen(
                                 query = query,
                                 currentTrackId = state.currentTrack?.id?.takeIf { state.playback.isPlaying },
                                 gridState = albumGridState,
+                                userScrollEnabled = !nav.scrollLocked,
                                 onAlbum = { albumKey = it.key },
                                 topContentPadding = topPadding,
                                 bottomContentPadding = bottomContentPadding,
@@ -635,7 +652,7 @@ internal fun LibraryScreen(
                     )
                     section == LibrarySection.PLAYLISTS && selectedPlaylist == null -> PlaylistBrowser(
                         playlists = state.playlists,
-                        tracks = state.tracks,
+                        tracks = state.tracks + state.streamedTracks,
                         query = query,
                         onPlaylist = onPlaylist,
                         onReorder = onReorderPlaylists,
@@ -705,7 +722,7 @@ internal fun LibraryScreen(
                             }
                             selectedPlaylist != null && playlistOpen -> {
                                 {
-                                    val tracksById = remember(state.tracks) { state.tracks.associateBy(Track::id) }
+                                    val tracksById = remember(state.tracks, state.streamedTracks) { (state.tracks + state.streamedTracks).associateBy(Track::id) }
                                     val playlistTracks = selectedPlaylist.trackIds.mapNotNull(tracksById::get)
                                     CollectionHeader(
                                         title = selectedPlaylist.name,
@@ -720,6 +737,7 @@ internal fun LibraryScreen(
                                         onSortMode = { playlistSort = it },
                                         onCustomOrder = { playlistSort = null },
                                         extraAction = {
+                                            OlbyineIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "添加整个流媒体歌单", { onAddStreamedPlaylist(selectedPlaylist.id) })
                                             OlbyineIconButton(Icons.Rounded.Add, "管理歌单歌曲", { addingSongs = true })
                                         },
                                     )
@@ -759,7 +777,17 @@ internal fun LibraryScreen(
                                     playlistOpen -> EmptyState(
                                         Icons.AutoMirrored.Rounded.QueueMusic,
                                         "歌单还是空的",
-                                    ) { PillButton("添加歌曲", { addingSongs = true }, icon = Icons.Rounded.Add) }
+                                    ) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            PillButton("添加歌曲", { addingSongs = true }, icon = Icons.Rounded.Add)
+                                            PillButton(
+                                                "整个歌单",
+                                                { selectedPlaylist?.let { onAddStreamedPlaylist(it.id) } },
+                                                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                                                style = PillStyle.TONAL,
+                                            )
+                                        }
+                                    }
                                     else -> EmptyState(Icons.Rounded.FolderOpen, "这里还没有歌曲")
                                 }
                             }
@@ -931,8 +959,9 @@ internal fun LibraryScreen(
         ) { Text("删除「${playlist.name}」只会移除歌单，歌曲仍保留在音乐库。") }
     }
     if (addingSongs && selectedPlaylist != null) {
-        PlaylistSongsDialog(selectedPlaylist, state.tracks,
-            onDismiss = { addingSongs = false }, onAdd = onAddToPlaylist, onRemove = onRemoveFromPlaylist)
+        PlaylistSongsDialog(selectedPlaylist, state.tracks + state.streamedTracks,
+            onDismiss = { addingSongs = false }, onAdd = onAddToPlaylist, onRemove = onRemoveFromPlaylist,
+            onAddStreamed = { onAddStreamedPlaylist(selectedPlaylist.id) })
     }
     if (confirmDelete) {
         val count = selection.ids.size
@@ -1320,6 +1349,7 @@ private fun AlbumGrid(
     query: String,
     currentTrackId: String?,
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    userScrollEnabled: Boolean = true,
     onAlbum: (Album) -> Unit,
     topContentPadding: Dp,
     bottomContentPadding: Dp,
@@ -1340,6 +1370,7 @@ private fun AlbumGrid(
         columns = GridCells.Adaptive(150.dp),
         modifier = Modifier.fillMaxSize(),
         state = gridState,
+        userScrollEnabled = userScrollEnabled,
         contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = topContentPadding + 4.dp, bottom = bottomContentPadding + 20.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -2224,8 +2255,88 @@ internal fun PlaylistNameDialog(title: String, initial: String, onDismiss: () ->
 }
 
 @Composable
+internal fun StreamedPlaylistDialog(
+    state: StreamedPlaylistUiState,
+    onSource: (StreamedSource) -> Unit,
+    onPick: (StreamedPlaylistItem) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (!state.open) return
+    OlbyineDialog(
+        onDismissRequest = onDismiss,
+        title = "添加整个歌单",
+        confirmButton = { GlassTextButton(onClick = onDismiss) { Text("完成") } },
+    ) {
+        Column {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StreamedSource.entries.forEach { source ->
+                    PillButton(
+                        source.label,
+                        { onSource(source) },
+                        style = if (state.source == source) PillStyle.FILLED else PillStyle.TONAL,
+                        height = 34.dp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            state.message?.let { notice ->
+                Text(notice, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+            }
+            when {
+                state.loading -> Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                }
+                state.items.isEmpty() -> Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        when (state.source) {
+                            StreamedSource.NETEASE -> "登录网易云音乐后可读取你的歌单"
+                            StreamedSource.LX -> "洛雪歌单里还没有内容"
+                            StreamedSource.SOUNDCLOUD -> "登录 SoundCloud 后可读取你的歌单"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                else -> LazyColumn(Modifier.height(360.dp)) {
+                    items(state.items, key = { it.key }) { item ->
+                        val busy = state.importing == item.key
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(enabled = state.importing == null) { onPick(item) }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
+                                UrlImage(item.cover, Modifier.fillMaxSize())
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${item.source.label} · ${item.count} 首",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            if (busy) {
+                                androidx.compose.material3.CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                            } else {
+                                Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PlaylistSongsDialog(playlist: Playlist, tracks: List<Track>, onDismiss: () -> Unit,
-    onAdd: (String, String) -> Unit, onRemove: (String, String) -> Unit) {
+    onAdd: (String, String) -> Unit, onRemove: (String, String) -> Unit, onAddStreamed: () -> Unit) {
     var search by remember { mutableStateOf("") }
     OlbyineDialog(
         onDismissRequest = onDismiss,
@@ -2233,6 +2344,8 @@ private fun PlaylistSongsDialog(playlist: Playlist, tracks: List<Track>, onDismi
         confirmButton = { GlassTextButton(onClick = onDismiss) { Text("完成") } },
     ) {
         Column {
+            PillButton("添加整个歌单", onAddStreamed, icon = Icons.AutoMirrored.Rounded.PlaylistAdd, style = PillStyle.TONAL, height = 38.dp)
+            Spacer(Modifier.height(8.dp))
             OlbyineSearchField(search, { search = it }, "搜索音乐库", Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))
             LazyColumn(Modifier.height(380.dp)) {

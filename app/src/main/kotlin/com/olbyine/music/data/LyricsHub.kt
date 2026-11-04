@@ -17,6 +17,7 @@ class LyricsHub(
     private val library: MusicLibraryRepository,
     private val netease: NeteaseClient,
     private val kuwo: KuwoClient,
+    private val matcher: OnlineLyricsRepository,
     scope: CoroutineScope,
 ) {
     private val currentId = MutableStateFlow<String?>(null)
@@ -47,21 +48,46 @@ class LyricsHub(
         if (id.startsWith("ncm:")) {
             onlineCache.get(id)?.let { return it }
             val songId = id.removePrefix("ncm:").toLongOrNull() ?: return LyricsDocument.Empty.copy(trackId = id)
-            val stored = runCatching { netease.lyrics(songId) }.getOrNull() ?: return LyricsDocument.Empty.copy(trackId = id)
-            return withContext(Dispatchers.Default) {
-                parse(stored.lyrics, stored.wordLyrics, stored.translationLyrics, stored.romanLyrics, id)
-            }.also { onlineCache.put(id, it) }
+            val document = runCatching { netease.lyrics(songId) }.getOrNull()?.let { stored ->
+                withContext(Dispatchers.Default) {
+                    parse(stored.lyrics, stored.wordLyrics, stored.translationLyrics, stored.romanLyrics, id)
+                }
+            } ?: LyricsDocument.Empty.copy(trackId = id)
+            val resolved = if (document.lines.isEmpty()) {
+                matchFallback(runCatching { netease.song(songId)?.toTrack() }.getOrNull(), id) ?: document
+            } else {
+                document
+            }
+            return resolved.also { onlineCache.put(id, it) }
         }
         if (id.startsWith("kw:")) {
             onlineCache.get(id)?.let { return it }
             val songId = id.removePrefix("kw:").toLongOrNull() ?: return LyricsDocument.Empty.copy(trackId = id)
-            val stored = runCatching { kuwo.lyrics(songId) }.getOrNull() ?: return LyricsDocument.Empty.copy(trackId = id)
-            return withContext(Dispatchers.Default) {
-                parse(stored.lyrics, stored.wordLyrics, stored.translationLyrics, stored.romanLyrics, id)
-            }.also { onlineCache.put(id, it) }
+            val document = runCatching { kuwo.lyrics(songId) }.getOrNull()?.let { stored ->
+                withContext(Dispatchers.Default) {
+                    parse(stored.lyrics, stored.wordLyrics, stored.translationLyrics, stored.romanLyrics, id)
+                }
+            } ?: LyricsDocument.Empty.copy(trackId = id)
+            val resolved = if (document.lines.isEmpty()) {
+                matchFallback(runCatching { kuwo.song(songId)?.toTrack() }.getOrNull(), id) ?: document
+            } else {
+                document
+            }
+            return resolved.also { onlineCache.put(id, it) }
         }
         val text = library.lyricsText(id) ?: return LyricsDocument.Empty.copy(trackId = id)
         return withContext(Dispatchers.Default) { parse(text.lines, text.words, text.translation, text.romanization, id) }
+    }
+
+    private suspend fun matchFallback(track: Track?, id: String): LyricsDocument? {
+        if (track == null) return null
+        val result = runCatching { matcher.match(track, includeCandidates = false) }.getOrNull() ?: return null
+        val selected = result.selected ?: return null
+        val stored = selected.toStoredLyrics()
+        val document = withContext(Dispatchers.Default) {
+            parse(stored.lyrics, stored.wordLyrics, stored.translationLyrics, stored.romanLyrics, id)
+        }
+        return document.takeIf { it.lines.isNotEmpty() }
     }
 
     private fun parse(lines: String?, words: String?, translation: String?, romanization: String?, id: String): LyricsDocument {

@@ -159,6 +159,7 @@ fun OlbyineApp(state: MainUiState, lyrics: LyricsDocument, viewModel: MainViewMo
         LocalGlassTuning provides state.settings.glassTuning,
         LocalReduceMotion provides reduceMotion,
         LocalPlayerFx provides state.settings.playerFx,
+        LocalPlayerButtons provides state.settings.playerButtons,
     ) {
         TrackGlassLight(state.settings.glassTuning.gyro && !reduceMotion && state.settings.uiStyle != com.olbyine.music.data.UiStyle.MATERIAL)
         HapticRipple { OlbyineAppContent(state, lyrics, viewModel) }
@@ -274,6 +275,12 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             }
         }
     }
+    val keepOnView = androidx.compose.ui.platform.LocalView.current
+    val keepOnActive = playerOpen && state.settings.keepScreenOn && state.playback.isPlaying
+    androidx.compose.runtime.DisposableEffect(keepOnActive) {
+        keepOnView.keepScreenOn = keepOnActive
+        onDispose { keepOnView.keepScreenOn = false }
+    }
     val sheet = rememberSpringValue(if (playerOpen) 1f else 0f)
     var infoVisible by rememberSaveable { mutableStateOf(false) }
     val pageTarget = when {
@@ -324,7 +331,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     var commentsFor by remember { mutableStateOf<Pair<Long, String>?>(null) }
     var scCommentsFor by remember { mutableStateOf<Pair<Long, String>?>(null) }
     val openScComments: (Long, String) -> Unit = { id, title -> scCommentsFor = id to title }
-    var streamingProvider by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("netease") }
+    var streamingProvider by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(state.settings.startStreamingProvider) }
     LaunchedEffect(onlineReveal) {
         val request = onlineReveal ?: return@LaunchedEffect
         streamingProvider = request.provider
@@ -383,7 +390,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             }
         }
     }
-    val libraryNav = rememberLibraryNav(state.libraryFilter == com.olbyine.music.LibraryFilter.FAVORITES)
+    val libraryNav = rememberLibraryNav(state.libraryFilter == com.olbyine.music.LibraryFilter.FAVORITES, state.settings.startLibrarySection)
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val appLayout = AppLayout.of(state.settings.layoutMode, configuration.screenWidthDp, configuration.screenHeightDp)
     val openLibrarySection: (LibrarySection) -> Unit = { item ->
@@ -931,6 +938,7 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                             onReorderPlaylists = viewModel::reorderPlaylists,
                             onMatchMetadata = { track -> viewModel.matchMetadata(track) },
                             onImportNeteasePlaylist = viewModel::openPlaylistImport,
+                            onAddStreamedPlaylist = viewModel::openStreamedPlaylistPicker,
                             onExternalLyrics = openListening,
                             albumRequest = albumRequest,
                             composerRequest = composerRequest,
@@ -1398,6 +1406,17 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                                 },
                                 onLocalComposer = { viewModel.openComposerOf(track) },
                                 onLocalAlbum = { viewModel.openAlbumOf(track) },
+                                onOpenAlbum = {
+                                    if (track.id.startsWith("ncm:")) {
+                                        appScope.launch {
+                                            val albumId = viewModel.neteaseAlbumIdOf(track)
+                                            if (albumId != null) openNeteaseLink(com.olbyine.music.data.NeteaseTarget.Album(albumId))
+                                            else viewModel.showMessage("没有找到这首歌的专辑")
+                                        }
+                                    } else {
+                                        viewModel.openAlbumOf(track)
+                                    }
+                                },
                                 onAppear = { name ->
                                     viewModel.autoDetails(track)
                                     viewModel.ensureArtistInfo(name)
@@ -1586,19 +1605,41 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
     val scPickId = playlistPickerFor?.id?.takeIf { it.startsWith("sc:") }?.removePrefix("sc:")?.toLongOrNull()
     val pickContext = LocalContext.current
     if (scPickId != null) {
+        val scTrack = playlistPickerFor
         ScPlaylistPicker(
             client = viewModel.soundCloud,
             trackId = scPickId,
+            libraryPlaylists = state.playlists,
+            libraryTracks = state.tracks + state.streamedTracks,
             onDone = { message ->
                 playlistPickerFor = null
                 android.widget.Toast.makeText(pickContext, message, android.widget.Toast.LENGTH_SHORT).show()
             },
+            onPickLibrary = { id ->
+                playlistPickerFor = null
+                if (scTrack != null) viewModel.addStreamedTrackToLibraryPlaylist(id, scTrack)
+            },
+            onCreateLibrary = { name ->
+                playlistPickerFor = null
+                if (scTrack != null) viewModel.createLibraryPlaylistWithStreamedTrack(name, scTrack)
+            },
             onDismiss = { playlistPickerFor = null },
         )
     } else if (ncmPickId != null) {
+        val ncmTrack = playlistPickerFor
         NeteasePlaylistPicker(
             client = viewModel.neteaseClient,
+            libraryPlaylists = state.playlists,
+            libraryTracks = state.tracks + state.streamedTracks,
             onPick = { playlist -> playlistPickerFor = null; viewModel.addNeteaseSongToPlaylist(playlist, ncmPickId) },
+            onPickLibrary = { id ->
+                playlistPickerFor = null
+                if (ncmTrack != null) viewModel.addStreamedTrackToLibraryPlaylist(id, ncmTrack)
+            },
+            onCreateLibrary = { name ->
+                playlistPickerFor = null
+                if (ncmTrack != null) viewModel.createLibraryPlaylistWithStreamedTrack(name, ncmTrack)
+            },
             onDismiss = { playlistPickerFor = null },
         )
     } else if (playlistPickerFor?.id?.startsWith("kw:") == true) {
@@ -1606,6 +1647,8 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
         LxPlaylistPicker(
             playlists = kuwoState.mine,
             trackTitle = kwTrack.title,
+            libraryPlaylists = state.playlists,
+            libraryTracks = state.tracks + state.streamedTracks,
             onAdd = { id ->
                 playlistPickerFor = null
                 viewModel.addTrackToLxPlaylist(id, kwTrack)
@@ -1613,6 +1656,14 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             onCreate = { name ->
                 playlistPickerFor = null
                 viewModel.createLxPlaylistWithTrack(name, kwTrack)
+            },
+            onPickLibrary = { id ->
+                playlistPickerFor = null
+                viewModel.addStreamedTrackToLibraryPlaylist(id, kwTrack)
+            },
+            onCreateLibrary = { name ->
+                playlistPickerFor = null
+                viewModel.createLibraryPlaylistWithStreamedTrack(name, kwTrack)
             },
             onDismiss = { playlistPickerFor = null },
         )
@@ -1630,7 +1681,13 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
                         val included = target.id in playlist.trackIds
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable {
-                                if (included) viewModel.removeFromPlaylist(playlist.id, target.id) else viewModel.addToPlaylist(playlist.id, target.id)
+                                if (included) {
+                                    viewModel.removeFromPlaylist(playlist.id, target.id)
+                                } else if (target.isOnline || target.id.startsWith("dav:")) {
+                                    viewModel.addStreamedTrackToLibraryPlaylist(playlist.id, target)
+                                } else {
+                                    viewModel.addToPlaylist(playlist.id, target.id)
+                                }
                             }.padding(horizontal = 6.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1710,6 +1767,13 @@ private fun OlbyineAppContent(state: MainUiState, lyrics: LyricsDocument, viewMo
             onDismiss = viewModel::closeNeteaseLogin,
         )
     }
+    val streamedPicker by viewModel.streamedPicker.collectAsState()
+    StreamedPlaylistDialog(
+        state = streamedPicker,
+        onSource = viewModel::selectStreamedSource,
+        onPick = viewModel::importStreamedPlaylist,
+        onDismiss = viewModel::dismissStreamedPlaylistPicker,
+    )
     if (playlistImport.visible) {
         PlaylistImportSheet(
             state = playlistImport,
@@ -2517,7 +2581,7 @@ private fun Context.findActivity(): Activity? {
 
 internal val SPEEDS = listOf(.75f, 1f, 1.25f, 1.5f, 2f)
 internal fun Float.formatSpeed(): String = if (this % 1f == 0f) "${toInt()}.0" else toString()
-private val AUDIO_MIME_TYPES = arrayOf("audio/*", "audio/mp4", "audio/x-m4a", "video/mp4", "application/mp4", "application/ogg", "application/octet-stream")
+private val AUDIO_MIME_TYPES = arrayOf("audio/*", "audio/mp4", "audio/x-m4a", "video/mp4", "application/mp4", "application/ogg", "application/octet-stream", "text/plain", "application/x-cue", "text/x-cue")
 private val LYRIC_MIME_TYPES = arrayOf("*/*")
 
 @Composable

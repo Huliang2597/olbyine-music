@@ -714,7 +714,7 @@ class NeteaseClient(context: Context) {
         own = false,
         kind = NeteaseCollectionKind.ALBUM,
         note = row.optLong("publishTime").takeIf { it > 0 }?.let {
-            java.text.SimpleDateFormat("yyyy", Locale.CHINA).format(java.util.Date(it))
+            java.text.SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(java.util.Date(it))
         }.orEmpty(),
     )
 

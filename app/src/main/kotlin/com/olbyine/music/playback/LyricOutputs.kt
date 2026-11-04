@@ -15,6 +15,7 @@ import android.graphics.BitmapFactory
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Paint
+import java.io.File
 import android.graphics.RectF
 import android.graphics.Shader
 import android.os.Build
@@ -263,7 +264,7 @@ internal class LyricOutputs(
         val key = metadata?.artworkUri?.toString()
         if (key != focusCoverKey) {
             focusCoverKey = key
-            focusCover = metadata?.artworkUri?.takeIf { it.scheme == "file" }?.path?.let(::roundedCover)
+            focusCover = coverFromUri(metadata?.artworkUri)
         }
         val cover = focusCover
         val picKey = "miui.focus.pic_cover"
@@ -440,7 +441,7 @@ internal class LyricOutputs(
         if (trackKey != widgetTrack) {
             widgetTrack = trackKey
             val artwork = metadata?.artworkUri
-            val cover = artwork?.takeIf { it.scheme == "file" }?.path?.let(::roundedCover)
+            val cover = coverFromUri(artwork)
             if (cover != null) views.setImageViewBitmap(R.id.widget_cover, cover)
             else views.setImageViewResource(R.id.widget_cover, R.drawable.widget_cover_placeholder)
             if (cover == null && artwork != null && (artwork.scheme == "https" || artwork.scheme == "http")) {
@@ -476,12 +477,29 @@ internal class LyricOutputs(
         return spannable
     }
 
+    private fun coverFromUri(uri: android.net.Uri?): Bitmap? {
+        if (uri == null) return null
+        return when (uri.scheme) {
+            "file" -> uri.path?.let(::roundedCover)
+            "content" -> runCatching {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()?.let(::roundedCoverBytes)
+            else -> null
+        }
+    }
+
     private fun roundedCover(path: String): Bitmap? = runCatching {
+        val file = File(path)
+        if (!file.exists()) return null
+        roundedCoverBytes(file.readBytes())
+    }.getOrNull()
+
+    private fun roundedCoverBytes(bytes: ByteArray): Bitmap? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(path, bounds)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         var sample = 1
         while (bounds.outWidth / (sample * 2) >= COVER_PX && bounds.outHeight / (sample * 2) >= COVER_PX) sample *= 2
-        val decoded = BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
         val output = Bitmap.createBitmap(COVER_PX, COVER_PX, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
         val scale = COVER_PX.toFloat() / minOf(decoded.width, decoded.height)

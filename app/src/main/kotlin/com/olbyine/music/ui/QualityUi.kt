@@ -5,13 +5,18 @@ package com.olbyine.music.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,8 +47,11 @@ import androidx.compose.ui.unit.dp
 import com.olbyine.music.data.HapticArea
 import com.olbyine.music.data.NeteaseClient
 import com.olbyine.music.data.Track
+import com.olbyine.music.playback.AudioChainRuntime
+import com.olbyine.music.playback.AudioEffects
 import com.olbyine.music.playback.NowPlayingFormat
 import com.olbyine.music.playback.usb.UsbAudioDriver
+import com.olbyine.music.playback.usb.UsbDriverState
 import com.olbyine.music.playback.usb.UsbDriverStatus
 import java.util.Locale
 
@@ -90,6 +99,7 @@ private fun AudioInfoDialog(track: Track, onDismiss: () -> Unit) {
     val format by NowPlayingFormat.format.collectAsState()
     val live = format.takeIf { it.mediaId == track.id }
     val driver by UsbAudioDriver.state.collectAsState()
+    val chain by AudioChainRuntime.state.collectAsState()
     val sampleRate = live?.sampleRate?.takeIf { it > 0 } ?: track.sampleRate
     val bits = track.bitsPerSample.takeIf { it > 0 } ?: live?.bitsPerSample ?: 0
     val bitrate = track.bitrate.takeIf { it > 0 } ?: live?.bitrate ?: 0
@@ -116,7 +126,8 @@ private fun AudioInfoDialog(track: Track, onDismiss: () -> Unit) {
         title = "音频信息",
         confirmButton = { GlassTextButton(onClick = onDismiss) { Text("关闭") } },
     ) {
-        Column(Modifier.fillMaxWidth()) {
+        val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.62f).dp
+        Column(Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState())) {
             Text(
                 track.title,
                 Modifier.fillMaxWidth(),
@@ -132,6 +143,91 @@ private fun AudioInfoDialog(track: Track, onDismiss: () -> Unit) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Start)
                     Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("音频链路", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            AudioChain(
+                listOf(
+                    "来源" to chainSource(track, live, sampleRate, bits, bitrate, channels),
+                    "解码" to "ExoPlayer · ${chain.encoding.ifBlank { "PCM" }}",
+                    "效果" to effectsLabel(),
+                    "路径" to if (driver.status == UsbDriverStatus.STREAMING) {
+                        "USB 独占直通 · 跳过系统混音"
+                    } else {
+                        "系统混音 · AudioTrack"
+                    },
+                    "输出" to outputLabel(driver, chain),
+                    "协商" to when {
+                        chain.sampleRate <= 0 -> "—"
+                        sampleRate <= 0 -> hz(chain.sampleRate)
+                        chain.sampleRate == sampleRate -> "${hz(chain.sampleRate)} · 未重采样"
+                        else -> "${hz(sampleRate)} → ${hz(chain.sampleRate)} · 系统重采样"
+                    },
+                )
+            )
+        }
+    }
+}
+
+private fun effectsLabel(): String {
+    val effects = AudioEffects.current
+    val active = buildList {
+        if (effects.eqEnabled) add(if (effects.eqActive) "均衡器 生效" else "均衡器 平直")
+        if (effects.balance != 0f) add(String.format(Locale.US, "平衡 %+.1f", effects.balance))
+        if (effects.mono) add("单声道")
+    }
+    return if (active.isEmpty()) "原声（未处理）" else active.joinToString(" · ")
+}
+
+private fun outputLabel(driver: UsbDriverState, chain: com.olbyine.music.playback.AudioChainState): String {
+    val parts = mutableListOf(driver.deviceName ?: chain.deviceName ?: "默认输出")
+    if (driver.status == UsbDriverStatus.STREAMING) {
+        if (driver.bitPerfect) parts += "位完美"
+        driver.format?.takeIf { it.isNotBlank() }?.let { parts += it }
+        if (driver.hardwareVolume) parts += "硬件音量 ${driver.volume}/100"
+        else parts += "软件音量 ${driver.volume}%"
+    } else {
+        chain.encoding.takeIf { it.isNotBlank() }?.let { parts += it }
+    }
+    return parts.joinToString(" · ")
+}
+
+private fun hz(value: Int): String =
+    String.format(Locale.US, "%.1f kHz", value / 1000.0).replace(".0 kHz", " kHz")
+
+private fun chainSource(track: Track, live: com.olbyine.music.playback.AudioFormatInfo?, rate: Int, bits: Int, bitrate: Int, channels: Int): String {
+    val parts = listOfNotNull(
+        track.formatLabel() ?: live?.mime?.substringAfter('/')?.uppercase(),
+        bits.takeIf { it > 0 }?.let { "$it bit" },
+        rate.takeIf { it > 0 }?.let(::hz),
+        when (channels) {
+            0 -> null
+            1 -> "单声道"
+            2 -> "立体声"
+            else -> "${channels} 声道"
+        },
+        bitrate.takeIf { it > 0 }?.let { "${it / 1000} kbps" },
+    )
+    return parts.joinToString(" · ").ifBlank { "未知" }
+}
+
+@Composable
+private fun AudioChain(stages: List<Pair<String, String>>) {
+    Column(Modifier.fillMaxWidth()) {
+        stages.forEachIndexed { index, (title, detail) ->
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                Column(Modifier.width(16.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Spacer(Modifier.height(6.dp))
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+                    if (index != stages.lastIndex) {
+                        Box(Modifier.padding(top = 3.dp).width(1.dp).weight(1f).background(MaterialTheme.colorScheme.outlineVariant))
+                    }
+                }
+                Column(Modifier.weight(1f).padding(start = 10.dp, bottom = if (index == stages.lastIndex) 0.dp else 14.dp)) {
+                    Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(detail, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 }
             }
         }

@@ -60,30 +60,132 @@ object LyricsParser {
     private val TIMESTAMP_TAG = Regex("""\[\d{1,3}:\d{1,2}""")
     private val QUOTED_TEXT = Regex(""""((?:[^"\\]|\\.)*)"""")
 
-    private val TX_FIELD = Regex(""""tx"\s*:\s*"((?:[^"\\]|\\.)*)"""")
+    private val CREDIT_WORDS = listOf(
+        "作词", "作曲", "编曲", "制作人", "混音", "母带", "词：", "曲：", "词:", "曲:",
+        "Lyricist", "Composer", "Arranger", "Producer",
+    )
 
     fun sanitize(raw: String): String {
         val text = raw.trim()
-        if (txField(text)) return ""
-        if (!text.startsWith("{") && !text.startsWith("[")) return raw
-        val looksJson = text.contains("\"code\"") || text.contains("\"msg\"") ||
-            text.contains("\"data\"") || text.contains("\"lyric\"")
-        if (!looksJson) return raw
-        val quoted = QUOTED_TEXT.findAll(text).map { it.groupValues[1] }.toList()
-        val withTime = quoted.filter { TIMESTAMP_TAG.containsMatchIn(it) }
+        if (text.isEmpty()) return raw
+        if (!looksJsonText(text)) {
+            if (!text.contains('{')) return raw
+            val stripped = stripJsonBlobs(text)
+            if (stripped != text) {
+                if (stripped.isNotBlank()) return stripped
+                return salvageTimed(text)
+            }
+            return raw
+        }
+        val stripped = stripJsonBlobs(text)
+        if (stripped != text && stripped.isNotBlank() && !looksJsonText(stripped)) return stripped
+        val quoted = QUOTED_TEXT.findAll(text).map { unescapeJson(it.groupValues[1]) }.toList()
+        val lyricsOnly = quoted.filterNot(::isCreditLine)
+        val withTime = lyricsOnly.filter { TIMESTAMP_TAG.containsMatchIn(it) }
         if (withTime.isNotEmpty()) return withTime.joinToString("\n")
-        val payload = quoted.firstOrNull { it.length > 20 && !it.startsWith("http") && !TIMESTAMP_TAG.containsMatchIn(it) }
-        return payload ?: ""
+        val payload = lyricsOnly.firstOrNull { it.length > 20 && !it.startsWith("http") && !TIMESTAMP_TAG.containsMatchIn(it) }
+        return payload ?: salvageTimed(text)
     }
 
-    private fun txField(text: String): Boolean {
-        if (!text.startsWith("{")) return false
-        val tx = TX_FIELD.findAll(text).map { it.groupValues[1] }.toList()
-        if (tx.size < 2) return false
-        val credit = tx.joinToString("").replace("\u00a0", "")
-        return !TIMESTAMP_TAG.containsMatchIn(credit) &&
-            (credit.contains("作曲") || credit.contains("作词") || credit.contains("编曲") ||
-                credit.contains("制作") || credit.contains("混音") || credit.contains("母带"))
+    private fun salvageTimed(text: String): String {
+        if (!TIMESTAMP_TAG.containsMatchIn(text)) return ""
+        return text.lineSequence()
+            .filter { TIMESTAMP_TAG.containsMatchIn(it) }
+            .joinToString("\n")
+    }
+
+    private fun looksJsonText(text: String): Boolean {
+        val head = text.first()
+        if (head == '{') return true
+        if (head != '[') return false
+        val next = text.drop(1).trimStart().firstOrNull() ?: return false
+        return next == '{' || next == '"'
+    }
+
+    private fun isCreditLine(value: String): Boolean =
+        CREDIT_WORDS.any { word -> value.contains(word, ignoreCase = true) }
+
+    private fun unescapeJson(value: String): String {
+        if (!value.contains('\\')) return value
+        val out = StringBuilder(value.length)
+        var index = 0
+        while (index < value.length) {
+            val current = value[index]
+            if (current != '\\' || index == value.length - 1) {
+                out.append(current)
+                index += 1
+                continue
+            }
+            when (val next = value[index + 1]) {
+                'n' -> out.append('\n')
+                'r' -> out.append('\r')
+                't' -> out.append('\t')
+                'b' -> out.append('\b')
+                'f' -> out.append('\u000C')
+                'u' -> {
+                    val hex = value.substring(index + 2, minOf(index + 6, value.length))
+                    val code = hex.toIntOrNull(16)
+                    if (code != null && hex.length == 4) {
+                        out.append(code.toChar())
+                        index += 6
+                        continue
+                    }
+                    out.append(next)
+                }
+                else -> out.append(next)
+            }
+            index += 2
+        }
+        return out.toString()
+    }
+
+    private fun stripJsonBlobs(text: String): String {
+        val out = StringBuilder()
+        var index = 0
+        while (index < text.length) {
+            val current = text[index]
+            if (current == '{' || current == '[') {
+                val end = matchingBracket(text, index)
+                if (end > index) {
+                    val slice = text.substring(index, end + 1)
+                    val closing = if (current == '{') '}' else ']'
+                    val structured = slice.length > 2 && slice.last() == closing && slice.contains('"')
+                    if (structured) {
+                        index = end + 1
+                        continue
+                    }
+                }
+            }
+            out.append(current)
+            index += 1
+        }
+        return out.toString().lineSequence().map(String::trim).filter(String::isNotEmpty).joinToString("\n")
+    }
+
+    private fun matchingBracket(text: String, start: Int): Int {
+        var depth = 0
+        var quoted = false
+        var escaped = false
+        for (index in start until text.length) {
+            val current = text[index]
+            if (quoted) {
+                when {
+                    escaped -> escaped = false
+                    current == '\\' -> escaped = true
+                    current == '"' -> quoted = false
+                }
+                continue
+            }
+            when (current) {
+                '"' -> quoted = true
+                '{', '[' -> depth += 1
+                '}', ']' -> {
+                    depth -= 1
+                    if (depth == 0) return index
+                }
+            }
+        }
+        return -1
     }
 
     fun parse(raw: String): LyricsDocument {

@@ -119,6 +119,9 @@ class SettingsRepository(context: Context) {
     fun setPlayerFx(bit: Int, enabled: Boolean) = update {
         it.copy(playerFx = if (enabled) it.playerFx or bit else it.playerFx and bit.inv())
     }
+    fun setPlayerButton(bit: Int, enabled: Boolean) = update {
+        it.copy(playerButtons = if (enabled) it.playerButtons or bit else it.playerButtons and bit.inv())
+    }
     fun setNotificationLyrics(value: Boolean) = update { it.copy(notificationLyrics = value) }
     fun setBluetoothLyrics(value: Boolean) = update { it.copy(bluetoothLyrics = value) }
     fun setTransitionMode(value: TransitionMode) = update { it.copy(transitionMode = value) }
@@ -155,6 +158,16 @@ class SettingsRepository(context: Context) {
     fun setNeteaseQuality(value: String) = update { it.copy(neteaseQuality = value) }
 
     fun setPlayerFullscreen(value: String) = update { it.copy(playerFullscreen = value) }
+
+    fun setKeepScreenOn(value: Boolean) = update { it.copy(keepScreenOn = value) }
+
+    fun setMultiAppPlayback(value: Boolean) = update { it.copy(multiAppPlayback = value) }
+
+    fun setStartPage(value: String) = update { it.copy(startPage = value) }
+
+    fun setStartLibrarySection(value: String) = update { it.copy(startLibrarySection = value) }
+
+    fun setStartStreamingProvider(value: String) = update { it.copy(startStreamingProvider = value) }
 
     private fun update(transform: (UserSettings) -> UserSettings) {
         val next = transform(_settings.value)
@@ -212,6 +225,7 @@ class SettingsRepository(context: Context) {
             .putInt(KEY_HAPTIC_AREAS, next.hapticAreas)
             .putBoolean(KEY_ARTWORK_BACKDROP, next.artworkBackdrop)
             .putInt(KEY_PLAYER_FX, next.playerFx)
+            .putInt(KEY_PLAYER_BUTTONS, next.playerButtons)
             .putInt(KEY_PLAYER_FX_REV, PLAYER_FX_REV)
             .putBoolean(KEY_NOTIFICATION_LYRICS, next.notificationLyrics)
             .putBoolean(KEY_BLUETOOTH_LYRICS, next.bluetoothLyrics)
@@ -237,6 +251,11 @@ class SettingsRepository(context: Context) {
             .putBoolean(KEY_AUTO_UPDATE, next.autoUpdateCheck)
             .putString(KEY_NETEASE_QUALITY, next.neteaseQuality)
                 .putString(KEY_PLAYER_FULLSCREEN, next.playerFullscreen)
+                .putBoolean(KEY_KEEP_SCREEN_ON, next.keepScreenOn)
+                .putBoolean(KEY_MULTI_APP_PLAYBACK, next.multiAppPlayback)
+                .putString(KEY_START_PAGE, next.startPage)
+                .putString(KEY_START_LIBRARY_SECTION, next.startLibrarySection)
+                .putString(KEY_START_PROVIDER, next.startStreamingProvider)
             .apply()
         com.olbyine.music.playback.AudioEffects.update(next)
     }
@@ -314,6 +333,7 @@ class SettingsRepository(context: Context) {
             playerFx = i(KEY_PLAYER_FX, PlayerFx.DEFAULT).let { saved ->
                 if (i(KEY_PLAYER_FX_REV, 1) < 2) saved or PlayerFx.GRADUAL_BLUR or PlayerFx.SHREDDER or PlayerFx.GLASS_ICONS or PlayerFx.BOUNCE_CARDS else saved
             },
+            playerButtons = i(KEY_PLAYER_BUTTONS, PlayerButtons.DEFAULT),
             notificationLyrics = b(KEY_NOTIFICATION_LYRICS, false),
             bluetoothLyrics = b(KEY_BLUETOOTH_LYRICS, false),
             transitionMode = runCatching { TransitionMode.valueOf(s(KEY_TRANSITION, null) ?: "OFF") }.getOrDefault(TransitionMode.OFF),
@@ -339,6 +359,11 @@ class SettingsRepository(context: Context) {
             autoUpdateCheck = b(KEY_AUTO_UPDATE, true),
             neteaseQuality = s(KEY_NETEASE_QUALITY, null) ?: "exhigh",
             playerFullscreen = s(KEY_PLAYER_FULLSCREEN, null) ?: "off",
+            keepScreenOn = b(KEY_KEEP_SCREEN_ON, false),
+            multiAppPlayback = b(KEY_MULTI_APP_PLAYBACK, false),
+            startPage = s(KEY_START_PAGE, null) ?: "library",
+            startLibrarySection = s(KEY_START_LIBRARY_SECTION, null) ?: "ALL",
+            startStreamingProvider = s(KEY_START_PROVIDER, null) ?: "netease",
         ).also { com.olbyine.music.playback.AudioEffects.update(it) }
     }
 
@@ -349,6 +374,7 @@ class SettingsRepository(context: Context) {
         const val KEY_HAPTIC_AREAS = "haptic_areas"
         const val KEY_ARTWORK_BACKDROP = "artwork_backdrop"
         const val KEY_PLAYER_FX = "player_fx"
+        const val KEY_PLAYER_BUTTONS = "player_buttons"
         const val KEY_PLAYER_FX_REV = "player_fx_rev"
         const val PLAYER_FX_REV = 2
         const val KEY_NOTIFICATION_LYRICS = "notification_lyrics"
@@ -375,6 +401,11 @@ class SettingsRepository(context: Context) {
         const val KEY_AUTO_UPDATE = "auto_update_check"
         const val KEY_NETEASE_QUALITY = "netease_quality"
     const val KEY_PLAYER_FULLSCREEN = "player_fullscreen"
+    const val KEY_KEEP_SCREEN_ON = "player_keep_screen_on"
+    const val KEY_MULTI_APP_PLAYBACK = "multi_app_playback"
+    const val KEY_START_PAGE = "start_page"
+    const val KEY_START_LIBRARY_SECTION = "start_library_section"
+    const val KEY_START_PROVIDER = "start_streaming_provider"
         const val KEY_THEME = "theme"
         const val KEY_LYRIC_SIZE = "lyric_size"
         const val KEY_LYRIC_GAP = "lyric_gap"

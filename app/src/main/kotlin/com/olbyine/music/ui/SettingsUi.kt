@@ -90,15 +90,24 @@ import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileDownloadDone
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RadioButtonChecked
@@ -187,6 +196,7 @@ import kotlin.math.sqrt
 private enum class SettingsPage(val title: String, val subtitle: String, val icon: ImageVector) {
     APPEARANCE("外观与风格", "界面风格、主题、玻璃材质、背景与应用图标", Icons.Rounded.Palette),
     PLAYER("播放页", "动态封面、律动背景、玻璃按钮", Icons.Rounded.PlayCircle),
+    PLAYER_BUTTONS("自定义播放页", "逐个开关播放页上的按钮，关闭后该位置留空、其他按钮不挪动", Icons.Rounded.Tune),
     LYRICS("歌词", "字号字重、时间偏移、高亮位置、自动匹配", Icons.Rounded.Lyrics),
     LYRIC_OUTPUT("歌词外显", "通知栏、状态栏、桌面小组件与车载歌词", Icons.Rounded.Notifications),
     TRANSITION("歌曲过渡", "像 Apple Music 一样自动衔接下一首", Icons.Rounded.SwapHoriz),
@@ -220,10 +230,19 @@ internal fun SettingsScreen(
     onNeteaseLogin: () -> Unit,
 ) {
     var page by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
+    var parentPage by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
+    val closePage = {
+        if (parentPage != null) {
+            page = parentPage
+            parentPage = null
+        } else {
+            page = null
+        }
+    }
     val homeScroll = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
     val haptics = rememberHaptics()
     androidx.compose.runtime.key(page) {
-        BackHandler(enabled = page != null && state.destination == com.olbyine.music.AppDestination.SETTINGS) { page = null }
+        BackHandler(enabled = page != null && state.destination == com.olbyine.music.AppDestination.SETTINGS) { closePage() }
     }
     val material = LocalStyleSpec.current.style == UiStyle.MATERIAL
     val axis = with(androidx.compose.ui.platform.LocalDensity.current) { 30.dp.roundToPx() }
@@ -244,13 +263,18 @@ internal fun SettingsScreen(
         if (shown == null) {
             SettingsHome(state, bottomContentPadding, homeScroll) {
                 haptics.light(HapticArea.MENUS)
+                parentPage = null
                 page = it
             }
         } else {
-            SettingsSubPage(shown.title, bottomContentPadding, onBack = { page = null }) {
+            SettingsSubPage(shown.title, bottomContentPadding, onBack = closePage) {
                 when (shown) {
                     SettingsPage.APPEARANCE -> AppearancePage(state, viewModel, onPickBackground)
-                    SettingsPage.PLAYER -> PlayerSettingsPage(state, viewModel)
+                    SettingsPage.PLAYER -> PlayerSettingsPage(state, viewModel) {
+                        parentPage = SettingsPage.PLAYER
+                        page = SettingsPage.PLAYER_BUTTONS
+                    }
+                    SettingsPage.PLAYER_BUTTONS -> PlayerButtonsPage(state, viewModel)
                     SettingsPage.LYRICS -> LyricsSettingsPage(state, viewModel, onImportFont)
                     SettingsPage.LYRIC_OUTPUT -> LyricOutputPage(state, viewModel)
                     SettingsPage.TRANSITION -> TransitionPage(state, viewModel)
@@ -376,6 +400,52 @@ private fun CompactTitleBar(
 private fun AppearancePage(state: MainUiState, viewModel: MainViewModel, onPickBackground: () -> Unit) {
     val settings = state.settings
     SettingsGroup("界面风格") { StylePicker(settings.uiStyle, viewModel::setUiStyle) }
+    SettingsGroup("启动") {
+        ChoiceRow(
+            Icons.Rounded.Home, "默认启动页", "打开应用时先进入的页面",
+            listOf("library" to "音乐库", "streaming" to "流媒体"), settings.startPage, viewModel::setStartPage,
+        )
+        androidx.compose.animation.AnimatedVisibility(
+            visible = settings.startPage == "library",
+            enter = fadeIn(tween(OlbyineTokens.Motion.standardMs)) + expandVertically(tween(240, easing = OlbyineTokens.Motion.easeOut)),
+            exit = fadeOut(tween(OlbyineTokens.Motion.quickMs)) + shrinkVertically(tween(200, easing = OlbyineTokens.Motion.easeOut)),
+        ) {
+            Column {
+                GroupDivider()
+                ChoiceRow(
+                    Icons.Rounded.LibraryMusic, "默认分类", "进入音乐库时默认显示的分类",
+                    listOf(
+                        "ALL" to "全部歌曲",
+                        "FAVORITES" to "收藏",
+                        "ALBUMS" to "专辑",
+                        "COMPOSERS" to "作曲人",
+                        "FOLDERS" to "文件夹",
+                        "PLAYLISTS" to "歌单",
+                    ),
+                    settings.startLibrarySection, viewModel::setStartLibrarySection,
+                )
+            }
+        }
+        androidx.compose.animation.AnimatedVisibility(
+            visible = settings.startPage == "streaming",
+            enter = fadeIn(tween(OlbyineTokens.Motion.standardMs)) + expandVertically(tween(240, easing = OlbyineTokens.Motion.easeOut)),
+            exit = fadeOut(tween(OlbyineTokens.Motion.quickMs)) + shrinkVertically(tween(200, easing = OlbyineTokens.Motion.easeOut)),
+        ) {
+            Column {
+                GroupDivider()
+                ChoiceRow(
+                    Icons.Rounded.Cloud, "默认流媒体", "启动时自动打开哪个流媒体来源",
+                    listOf(
+                        "netease" to "网易云",
+                        "kuwo" to "洛雪",
+                        "soundcloud" to "SoundCloud",
+                        "navidrome" to "Navidrome",
+                    ),
+                    settings.startStreamingProvider, viewModel::setStartStreamingProvider,
+                )
+            }
+        }
+    }
     SettingsGroup("布局") {
         ChoiceRow(
             Icons.Rounded.TabletAndroid, "布局模式", "平板：iPad 式侧边栏导航，横屏时播放页左边控制、右边歌词；手机竖屏也可开启（侧边栏收为图标栏）。自动：窗口够宽（平板、手机横屏）时用平板布局",
@@ -443,14 +513,28 @@ private fun AppearancePage(state: MainUiState, viewModel: MainViewModel, onPickB
 }
 
 @Composable
-private fun PlayerSettingsPage(state: MainUiState, viewModel: MainViewModel) {
+private fun PlayerSettingsPage(state: MainUiState, viewModel: MainViewModel, onOpenButtons: () -> Unit) {
     val settings = state.settings
+    SettingsGroup("自定义") {
+        LinkRow(
+            Icons.Rounded.Tune, "自定义播放页", "逐个开关播放页上的按钮，关闭后位置保留、其他按钮不挪动",
+            onClick = onOpenButtons,
+        )
+    }
     SettingsGroup("全屏") {
         ChoiceRow(
             Icons.Rounded.Fullscreen, "进入播放页时全屏", "隐藏状态栏和底部手势横条；仅在对应屏幕方向下生效",
             listOf("off" to "关闭", "portrait" to "仅竖屏", "landscape" to "仅横屏", "always" to "全局"),
             settings.playerFullscreen, viewModel::setPlayerFullscreen,
         )
+    }
+    SettingsGroup("屏幕") {
+        SettingSwitch(Icons.Rounded.LightMode, "播放页常亮", "停留在播放页时不自动息屏；离开播放页或暂停播放后恢复正常息屏",
+            settings.keepScreenOn, viewModel::setKeepScreenOn)
+    }
+    SettingsGroup("多应用播放") {
+        SettingSwitch(Icons.Rounded.GraphicEq, "与其他应用同时播放", "不再申请音频焦点：其他应用播放时本应用不暂停也不降低音量，多个应用的声音由系统混合输出",
+            settings.multiAppPlayback, viewModel::setMultiAppPlayback)
     }
     SettingsGroup("封面与背景") {
         ChoiceRow(
@@ -473,10 +557,6 @@ private fun PlayerSettingsPage(state: MainUiState, viewModel: MainViewModel) {
         GroupDivider()
         SettingSwitch(Icons.Rounded.RadioButtonChecked, "玻璃按钮", "播放、切歌与模式按钮下方加一层液态玻璃",
             settings.playerGlassButtons, viewModel::setPlayerGlassButtons)
-        GroupDivider()
-        SettingSwitch(Icons.Rounded.Headphones, "显示本地/监听切换", "播放页底部的切换；播放网易云 / SoundCloud 歌曲时会自动隐藏",
-            settings.showSourceSwitch, viewModel::setShowSourceSwitch)
-
     }
     SettingsGroup("特效（来自 React Bits）") {
         com.olbyine.music.data.PlayerFx.labels.forEachIndexed { index, (bit, title, description) ->
@@ -493,6 +573,32 @@ private fun PlayerSettingsPage(state: MainUiState, viewModel: MainViewModel) {
             SettingSwitch(icon, title, description, settings.playerFx and bit != 0) { viewModel.setPlayerFx(bit, it) }
         }
     }
+}
+
+@Composable
+private fun PlayerButtonsPage(state: MainUiState, viewModel: MainViewModel) {
+    val settings = state.settings
+    SettingsGroup("播放页按钮") {
+        com.olbyine.music.data.PlayerButtons.labels.forEachIndexed { index, (bit, title, description) ->
+            if (index > 0) GroupDivider()
+            val icon = when (bit) {
+                com.olbyine.music.data.PlayerButtons.PREVIOUS -> Icons.Rounded.SkipPrevious
+                com.olbyine.music.data.PlayerButtons.PLAY -> Icons.Rounded.PlayArrow
+                com.olbyine.music.data.PlayerButtons.NEXT -> Icons.Rounded.SkipNext
+                com.olbyine.music.data.PlayerButtons.MODE -> Icons.Rounded.Repeat
+                com.olbyine.music.data.PlayerButtons.FAVORITE -> Icons.Rounded.FavoriteBorder
+                com.olbyine.music.data.PlayerButtons.FOLDER -> Icons.Rounded.FolderOpen
+                com.olbyine.music.data.PlayerButtons.QUEUE -> Icons.AutoMirrored.Rounded.QueueMusic
+                com.olbyine.music.data.PlayerButtons.MENU -> Icons.Rounded.MoreVert
+                else -> Icons.Rounded.SwapHoriz
+            }
+            SettingSwitch(icon, title, description, settings.playerButtons and bit != 0) { viewModel.setPlayerButton(bit, it) }
+        }
+        GroupDivider()
+        SettingSwitch(Icons.Rounded.Headphones, "本地 / 监听切换", "播放页底部的切换；播放网易云 / SoundCloud 歌曲时会自动隐藏",
+            settings.showSourceSwitch, viewModel::setShowSourceSwitch)
+    }
+    Note("关掉的按钮只是不绘制，位置仍然占着，所以其他按钮不会挪动；随时回来打开即可。")
 }
 
 @Composable
@@ -808,8 +914,13 @@ private fun LibrarySettingsPage(state: MainUiState, viewModel: MainViewModel) {
         LinkRow(Icons.Rounded.Image, "补全全部封面与信息", "为整个曲库中缺少封面或信息的歌曲在线补全", viewModel::completeLibraryMetadata)
     }
     var cacheBytes by remember { mutableStateOf<Long?>(null) }
+    var coverBytes by remember { mutableStateOf<Long?>(null) }
     val cacheScope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { cacheBytes = viewModel.cacheUsageBytes() }
+    val coverContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) {
+        cacheBytes = viewModel.cacheUsageBytes()
+        coverBytes = viewModel.storedCoverBytes()
+    }
     SettingsGroup("存储") {
         LinkRow(
             Icons.Rounded.CleaningServices,
@@ -819,6 +930,25 @@ private fun LibrarySettingsPage(state: MainUiState, viewModel: MainViewModel) {
             onClick = {
                 viewModel.clearCaches()
                 cacheScope.launch { kotlinx.coroutines.delay(400); cacheBytes = viewModel.cacheUsageBytes() }
+            },
+        )
+        GroupDivider()
+        LinkRow(
+            Icons.Rounded.Image,
+            "清理已拷贝的封面",
+            coverBytes?.let {
+                if (it > 0) "旧版本把封面复制进了应用目录，占用 ${formatDownloadSize(it)}；清理后封面改为直接从音频文件读取"
+                else "没有需要清理的封面副本"
+            } ?: "旧版本把封面复制进了应用目录",
+            onClick = {
+                viewModel.clearCopiedCovers { freed ->
+                    android.widget.Toast.makeText(
+                        coverContext,
+                        if (freed > 0) "已清理 ${formatDownloadSize(freed)}" else "没有需要清理的封面",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                    cacheScope.launch { coverBytes = viewModel.storedCoverBytes() }
+                }
             },
         )
     }
@@ -1175,6 +1305,7 @@ private fun CreditRow(credit: Credit, onClick: () -> Unit) {
 private fun glassColorsOf(page: SettingsPage): List<Color> = when (page) {
     SettingsPage.APPEARANCE -> GlassIconColors.purple
     SettingsPage.PLAYER -> GlassIconColors.pink
+    SettingsPage.PLAYER_BUTTONS -> GlassIconColors.teal
     SettingsPage.LYRICS -> GlassIconColors.indigo
     SettingsPage.LYRIC_OUTPUT -> GlassIconColors.orange
     SettingsPage.TRANSITION -> GlassIconColors.teal

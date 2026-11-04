@@ -788,11 +788,18 @@ private fun KuwoSearchTab(
 internal fun LxPlaylistPicker(
     playlists: List<LxPlaylist>,
     trackTitle: String,
+    libraryPlaylists: List<com.olbyine.music.data.Playlist>,
+    libraryTracks: List<com.olbyine.music.data.Track> = emptyList(),
     onAdd: (String) -> Unit,
     onCreate: (String) -> Unit,
+    onPickLibrary: (String) -> Unit,
+    onCreateLibrary: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var naming by remember { mutableStateOf(false) }
+    var namingLibrary by remember { mutableStateOf(false) }
+    var libraryMode by remember { mutableStateOf(false) }
+    val libraryTrackById = remember(libraryTracks) { libraryTracks.associateBy(com.olbyine.music.data.Track::id) }
     val haptics = rememberHaptics()
     val lxState = androidx.compose.foundation.lazy.rememberLazyListState()
     val lxAtTop by remember(lxState) {
@@ -807,6 +814,53 @@ internal fun LxPlaylistPicker(
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.size(10.dp))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 22.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PickerChip("洛雪歌单", !libraryMode) { libraryMode = false }
+                PickerChip("音乐库歌单", libraryMode) { libraryMode = true }
+            }
+            Spacer(Modifier.size(8.dp))
+            if (libraryMode) {
+                LazyColumn(Modifier.fillMaxWidth(), state = lxState) {
+                    item(key = "library-new") {
+                        PickerRow(
+                            leading = {
+                                Box(
+                                    Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = .08f)),
+                                    contentAlignment = Alignment.Center,
+                                ) { StyledIcon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.onSurface) }
+                            },
+                            title = "新建歌单",
+                            subtitle = "在音乐库里新建，并把这首歌放进去",
+                            onClick = { namingLibrary = true },
+                        )
+                    }
+                    items(libraryPlaylists, key = { it.id }) { playlist ->
+                        PickerRow(
+                            leading = {
+                                CoverMosaic(
+                                    remember(playlist.trackIds, libraryTrackById) {
+                                        playlist.trackIds.asSequence().mapNotNull(libraryTrackById::get).take(4).toList()
+                                    },
+                                    Modifier.size(48.dp),
+                                    12.dp,
+                                    playlist.id,
+                                )
+                            },
+                            title = playlist.name,
+                            subtitle = "${playlist.trackIds.size} 首",
+                            onClick = {
+                                haptics.click(com.olbyine.music.data.HapticArea.MENUS)
+                                onPickLibrary(playlist.id)
+                            },
+                        )
+                    }
+                }
+            } else {
             LazyColumn(Modifier.fillMaxWidth(), state = lxState) {
                 item(key = "new") {
                     PickerRow(
@@ -850,7 +904,14 @@ internal fun LxPlaylistPicker(
                     )
                 }
             }
+            }
             Spacer(Modifier.size(12.dp))
+        }
+    }
+    if (namingLibrary) {
+        PlaylistNameDialog("新建音乐库歌单", "", { namingLibrary = false }) { name ->
+            namingLibrary = false
+            onCreateLibrary(name)
         }
     }
     if (naming) {

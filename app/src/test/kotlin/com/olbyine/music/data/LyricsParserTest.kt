@@ -137,4 +137,53 @@ class LyricsParserTest {
         assertEquals(listOf(1_000L, 2_000L, 3_000L), words.map { it.startMs })
         assertEquals(listOf(2_000L, 3_000L, 4_000L), words.map { it.endMs })
     }
+
+    @Test
+    fun dropsJsonOnlyLyrics() {
+        val document = LyricsParser.parse("""{"code":200,"msg":"ok","data":{"id":1}}""")
+        assertTrue(document.lines.isEmpty())
+        assertEquals("", LyricsParser.sanitize("""{"code":200,"msg":"ok","data":{"id":1}}"""))
+    }
+
+    @Test
+    fun stripsJsonBlobButKeepsLyricsText() {
+        val mixed = """{"code":200,"msg":"ok"}""" + "\n" + "[00:01.00]第一行\n[00:02.00]第二行"
+        val cleaned = LyricsParser.sanitize(mixed)
+        assertEquals("[00:01.00]第一行\n[00:02.00]第二行", cleaned)
+        val document = LyricsParser.parse(mixed)
+        assertEquals(listOf("第一行", "第二行"), document.lines.map { it.text })
+    }
+
+    @Test
+    fun keepsTimedLyricsInsideNeteaseJson() {
+        val payload = """{"code":200,"lyric":"[00:01.00]你好\n[00:02.00]世界","msg":"ok"}"""
+        val document = LyricsParser.parse(payload)
+        assertEquals(listOf("你好", "世界"), document.lines.map { it.text })
+    }
+
+    @Test
+    fun dropsCreditJsonLyrics() {
+        assertEquals("", LyricsParser.sanitize("""{"tx":"作词 : 张三"}"""))
+        assertEquals("", LyricsParser.sanitize("""{"tx":"作词 : 张三","tx2":"作曲 : 李四"}"""))
+        assertTrue(LyricsParser.parse("""{"tx":"作词 : 张三","tx2":"作曲 : 李四"}""").lines.isEmpty())
+    }
+
+    @Test
+    fun keepsTimedLyricsWhenJsonAlsoCarriesCredits() {
+        val payload = """{"credit":"作词 : 张三","lyric":"[00:01.00]你好\n[00:02.00]世界"}"""
+        val document = LyricsParser.parse(payload)
+        assertEquals(listOf("你好", "世界"), document.lines.map { it.text })
+    }
+
+    @Test
+    fun keepsLyricsWhenJsonCarriesCreditsAndLyricField() {
+        val payload = """{"tx":"作词 : 张三","tx":"作曲 : 李四","lyric":"[00:01.00]第一句\n[00:02.00]第二句"}"""
+        assertEquals(listOf("第一句", "第二句"), LyricsParser.parse(payload).lines.map { it.text })
+    }
+
+    @Test
+    fun keepsTimedLinesWhenCreditJsonIsInline() {
+        val text = """{"tx":"作词 : 张三"}""" + "\n" + "[00:01.00]第一句\n[00:02.00]第二句"
+        assertEquals(listOf("第一句", "第二句"), LyricsParser.parse(text).lines.map { it.text })
+    }
 }

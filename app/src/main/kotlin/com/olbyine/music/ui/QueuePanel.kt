@@ -167,11 +167,21 @@ internal fun QueuePanel(
         }
         dragOffset = 0f
         handoff[1] = 0f
-        progress.animateTo(
-            if (visible) 1f else 0f,
-            spring(dampingRatio = if (visible) .82f else 1f, stiffness = if (visible) 380f else 600f),
-            initialVelocity = velocity,
-        )
+        if (velocity != 0f) {
+            progress.animateTo(
+                if (visible) 1f else 0f,
+                spring(dampingRatio = 1f, stiffness = 620f),
+                initialVelocity = velocity,
+            )
+        } else {
+            progress.animateTo(
+                if (visible) 1f else 0f,
+                androidx.compose.animation.core.tween(
+                    durationMillis = if (visible) 300 else 210,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
+                ),
+            )
+        }
     }
     GlassMotion.Drive { progress.value; dragOffset }
     if (!visible && progress.value <= 0.001f) return
@@ -194,12 +204,12 @@ internal fun QueuePanel(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(panelHeight)
+                .navigationBarsPadding()
                 .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
                 .graphicsLayer {
                     translationY = (1f - progress.value) * (panelPx + 40f) + dragOffset
                 }
-                .glass(source, style)
-                .navigationBarsPadding(),
+                .glass(source, style),
         ) { androidx.compose.runtime.CompositionLocalProvider(LocalOnGlass provides true, androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             Column(Modifier.fillMaxSize()) {
                 Column(
